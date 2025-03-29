@@ -1,6 +1,6 @@
 import cupy as cp
 import numpy as np
-import MDAnalysis as MDA
+import MDAnalysis as mda
 from ARPDF import compute_ARPDF
 from utils import generate_grids, cosine_similarity
 from utils import compute_axis_direction, adjust_ccl3_structure
@@ -13,8 +13,11 @@ def search_structure(universe, ARPDF_exp, cutoff=10.0, N=512):
         cl_atoms = universe.atoms.select_atoms("name Cl")
         return list(cl_atoms.indices)
     
-    def generate_u2(molecule):
+    def generate_u2(molecule, periodic=None):
         """ Return List[(polar_axis, u2)] """
+
+        box = universe.dimensions if periodic else None
+
         u2 = universe.copy()
     
         target_cl = u2.atoms.select_atoms(f"name Cl and index {molecule}")
@@ -32,11 +35,11 @@ def search_structure(universe, ARPDF_exp, cutoff=10.0, N=512):
             raise ValueError(f"分子 {mol_number} 中 Cl 原子数量不足，无法调整 CCl₃ 结构！")
 
         # 计算 C->Cl 方向
-        polar_axis = compute_axis_direction(target_c, target_cl)
+        polar_axis = compute_axis_direction(target_c, target_cl, box=box)
 
         # 调整 CCl₃ 结构
         modified_atoms = []
-        adjust_ccl3_structure(target_c, target_cl, other_cls, stretch_distance=0.2, modified_atoms=modified_atoms)
+        adjust_ccl3_structure(target_c, target_cl, other_cls, stretch_distance=0.2, modified_atoms=modified_atoms, box=box)
 
         return [(polar_axis, u2, modified_atoms)]
 

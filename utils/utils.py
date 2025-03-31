@@ -161,7 +161,7 @@ def preprocess_ARPDF(
     X = X_ori[y_mask, :][:, x_mask]
     Y = Y_ori[y_mask, :][:, x_mask]
     ARPDF = ARPDF_raw[y_mask, :][:, x_mask]
-    ARPDF = ARPDF_raw / np.max(np.abs(ARPDF_raw)) * max_intensity
+    ARPDF = ARPDF / np.max(np.abs(ARPDF)) * max_intensity
     if new_grid_size is not None:
         X, Y, ARPDF = resize_ARPDF(ARPDF, (X, Y), new_grid_size)
     return X, Y, ARPDF

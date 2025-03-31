@@ -127,6 +127,45 @@ def to_numpy(*args):
     out = _to_numpy(*args)
     return out[0] if len(out) == 1 else out
 
+def resize_ARPDF(ARPDF_exp, original_grids, grid_size = None):
+    raise NotImplementedError("Not implemented yet")
+
+def preprocess_ARPDF(
+        ARPDF_raw: np.ndarray, 
+        original_range, 
+        rmax = None, 
+        new_grid_size = None, 
+        max_intensity = 1.0
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    预处理ARPDF数据，包括范围限制、网格重采样和强度归一化。
+    
+    参数:
+    ARPDF_raw: 原始ARPDF数据数组。
+    original_range: 原始数据的范围。
+    rmax: 数据处理的最大范围，如果未提供，则默认为original_range的最小绝对值。
+    new_grid_size: 新的网格尺寸，如果提供，则重采样数据到新的网格尺寸。
+    max_intensity: 最大强度值，用于数据归一化，默认为1.0。
+    
+    返回:
+    X: 处理后的X轴网格数据。
+    Y: 处理后的Y轴网格数据。
+    ARPDF: 处理后的ARPDF数据。
+    """
+    if rmax is None:
+        rmax = np.min(np.abs(original_range))
+    N, M = ARPDF_raw.shape
+    X_ori, Y_ori = generate_grids(original_range, N, M, use_cupy=False)
+    x_mask = np.abs(X_ori[0, :]) <= rmax
+    y_mask = np.abs(Y_ori[:, 0]) <= rmax
+    X = X_ori[y_mask, :][:, x_mask]
+    Y = Y_ori[y_mask, :][:, x_mask]
+    ARPDF = ARPDF_raw[y_mask, :][:, x_mask]
+    ARPDF = ARPDF_raw / np.max(np.abs(ARPDF_raw)) * max_intensity
+    if new_grid_size is not None:
+        X, Y, ARPDF = resize_ARPDF(ARPDF, (X, Y), new_grid_size)
+    return X, Y, ARPDF
+
 if __name__ == "__main__":
     # Test box_shift
     arr_np = np.random.rand(5, 3)

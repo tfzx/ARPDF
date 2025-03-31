@@ -36,22 +36,28 @@ def box_shift(dx: ArrayType, box: Optional[List[float]] = None) -> ArrayType:
     cell = box_to_cell(box)
     return dx - xp.matmul(xp.round(xp.matmul(dx, xp.linalg.inv(cell))), cell)
 
-def generate_grids(rmax: float, N: int = 512, module_name: str = "cp") -> Tuple[ArrayType, ArrayType]:
+def generate_grids(xy_range, N: int = 512, M: Optional[int] = None, use_cupy: bool = False) -> Tuple[ArrayType, ArrayType]:
     """
     Generate a 2D grid of N x N points in the range [-rmax, rmax]^2.
 
     Returns:
         (X, Y): Grid coordinates.
     """
-    module_name = module_name.strip().lower()
-    if module_name == "cp":
+    if use_cupy:
         xp = cp
-    elif module_name == "np":
-        xp = np
     else:
-        raise ValueError("module_name must be 'cp' or 'np'")
-    x = xp.linspace(-rmax, rmax, N, dtype=xp.float32)
-    y = xp.linspace(-rmax, rmax, N, dtype=xp.float32)
+        xp = np
+    if isinstance(xy_range, (float, int)):
+        xmin, xmax, ymin, ymax = [-xy_range, xy_range, -xy_range, xy_range]
+    elif len(xy_range) == 2:
+        xmin, xmax = xy_range
+        ymin, ymax = xy_range
+    else:
+        xmin, xmax, ymin, ymax = xy_range
+    if M is None:
+        M = N
+    x = xp.linspace(xmin, xmax, N, dtype=xp.float32)
+    y = xp.linspace(ymin, ymax, M, dtype=xp.float32)
     return xp.meshgrid(x, y)
 
 
@@ -79,6 +85,48 @@ def cosine_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType) -> float:
     _x2 = xp.array(ARPDF2, dtype=xp.float32)
     return xp.vdot(_x1, _x2) / (xp.linalg.norm(_x1) * xp.linalg.norm(_x2) + 1e-8)
 
+def _to_cupy(*args) -> list:
+    out = []
+    for arg in args:
+        if isinstance(arg, cp.ndarray):
+            out.append(arg)
+        elif isinstance(arg, np.ndarray):
+            out.append(cp.array(arg))
+        elif isinstance(arg, list):
+            out.append(_to_cupy(*arg))
+        elif isinstance(arg, tuple):
+            out.append(tuple(_to_cupy(*arg)))
+        elif isinstance(arg, dict):
+            out.append({k: _to_cupy(v)[0] for k, v in arg.items()})
+        else:
+            out.append(arg)
+    return out
+
+def _to_numpy(*args) -> list:
+    out = []
+    for arg in args:
+        if isinstance(arg, cp.ndarray):
+            out.append(arg.get())
+        elif isinstance(arg, np.ndarray):
+            out.append(arg)
+        elif isinstance(arg, list):
+            out.append(_to_numpy(*arg))
+        elif isinstance(arg, tuple):
+            out.append(tuple(_to_numpy(*arg)))
+        elif isinstance(arg, dict):
+            out.append({k: _to_numpy(v)[0] for k, v in arg.items()})
+        else:
+            out.append(arg)
+    return out
+
+def to_cupy(*args):
+    out = _to_cupy(*args)
+    return out[0] if len(out) == 1 else out
+
+def to_numpy(*args):
+    out = _to_numpy(*args)
+    return out[0] if len(out) == 1 else out
+
 if __name__ == "__main__":
     # Test box_shift
     arr_np = np.random.rand(5, 3)
@@ -88,8 +136,8 @@ if __name__ == "__main__":
     assert cp.get_array_module(res_np) is np
     assert cp.get_array_module(res_cp) is cp
     # Test generate_grids
-    X_cp, Y_cp = generate_grids(10, 512)
-    X_np, Y_np = generate_grids(10, 512, "np")
+    X_np, Y_np = generate_grids(10, 512)
+    X_cp, Y_cp = generate_grids(10, 512, use_cupy=True)
     assert cp.get_array_module(X_cp) is cp
     assert cp.get_array_module(X_np) is np
     # Test abel_inversion
@@ -108,3 +156,19 @@ if __name__ == "__main__":
     # Test cosine_similarity
     cosine_similarity(res_np, res_np)
     cosine_similarity(res_cp, res_cp)
+    arr_np = np.arange(3)
+    arr_cp = cp.arange(3, 6)
+    print(_to_cupy(arr_np))
+    assert isinstance(_to_cupy(arr_np)[0], cp.ndarray)
+    print(_to_cupy(arr_np, arr_cp))
+    print(_to_cupy((arr_np, arr_cp)))
+    print(_to_cupy([arr_np, arr_cp]))
+    res = _to_cupy({"a": arr_np, "b": arr_cp}, arr_np)
+    print(res)
+    assert isinstance(res[0]["a"], cp.ndarray)
+    assert isinstance(res[1], cp.ndarray)
+    res = _to_cupy({"c": ({"a": arr_np, "b": arr_cp}, arr_cp), "d": [arr_np, arr_cp]})
+    print(res)
+    assert isinstance(res[0]["c"][0]["a"], cp.ndarray)
+    assert isinstance(res[0]["d"][0], cp.ndarray)
+    print(to_cupy([arr_np, arr_cp]))

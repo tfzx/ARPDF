@@ -1,7 +1,8 @@
 import numpy as np
 import MDAnalysis as mda
+from utils import box_shift
 
-
+'''
 def apply_PBC(vec, box):
     """
     应用周期性边界条件，确保向量在盒子内。
@@ -12,7 +13,7 @@ def apply_PBC(vec, box):
         elif vec[i] < -0.5 * box[i]:
             vec[i] += box[i]
     return vec
-
+'''
 
 def compute_axis_direction(c_atom, cl_atom, box=None):
     """
@@ -23,7 +24,7 @@ def compute_axis_direction(c_atom, cl_atom, box=None):
 
     # 如果提供了盒子信息（即考虑周期性边界条件），则应用PBC
     if box is not None:
-        vec = apply_PBC(vec, box)
+        vec = box_shift(vec, box)
 
     # 计算向量的模长
     norm = np.linalg.norm(vec)
@@ -55,7 +56,7 @@ def adjust_ccl3_structure(c_atom, cl_target, other_cls, stretch_distance=0.2, mo
     if box is not None:
         # 应用PBC校正所有Cl原子与C原子之间的位置
         for i in range(len(cl_positions)):
-            cl_positions[i] = apply_PBC(cl_positions[i] - c_atom.position, box) + c_atom.position
+            cl_positions[i] = box_shift(cl_positions[i] - c_atom.position, box) + c_atom.position
 
     new_c_pos = np.mean(cl_positions, axis=0)
 
@@ -64,7 +65,7 @@ def adjust_ccl3_structure(c_atom, cl_target, other_cls, stretch_distance=0.2, mo
     
     # 应用周期性边界条件
     if box is not None:
-        cl_vector = apply_PBC(cl_vector, box)
+        cl_vector = box_shift(cl_vector, box)
     
     cl_direction = cl_vector / np.linalg.norm(cl_vector)
     

@@ -1,6 +1,7 @@
 from collections import Counter
 from typing import Dict, List, Optional, Tuple
 import cupy as cp
+from matplotlib import pyplot as plt
 import numpy as np
 import MDAnalysis as mda
 import MDAnalysis.analysis.distances as mda_dist
@@ -240,6 +241,7 @@ def compute_ARPDF(
     if verbose:
         show_images([("ARPDF", ARPDF)], plot_range=cutoff, show_range=8, cmap="bwr", c_range=0.5*ARPDF.max(), 
                     clabel="Reconstructed Intensity") #, interpolation='bicubic')
+        plt.show()
 
     return ARPDF
 
@@ -252,6 +254,6 @@ def compare_ARPDF(ARPDF, ARPDF_exp, grids_XY, cos_sim = None, show_range = 8.0):
     ARPDF_exp /= np.linalg.norm(ARPDF_exp) * h**2 + 1e-3
     xmin, xmax = X.min(), X.max()
     ymin, ymax = Y.min(), Y.max()
-    show_images({f"ARPDF (Sim: {cos_sim:0.2f})": ARPDF, "ARPDF (Experimental)": ARPDF_exp}.items(), 
+    return show_images({f"ARPDF (Sim: {cos_sim:0.2f})": ARPDF, "ARPDF (Experimental)": ARPDF_exp}.items(), 
                       plot_range=[xmin, xmax, ymin, ymax], show_range=show_range, c_range=1.5,
                         cmap="bwr", colorbar="align")

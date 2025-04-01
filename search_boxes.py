@@ -1,4 +1,5 @@
 import cupy as cp
+from matplotlib import pyplot as plt
 import numpy as np
 import MDAnalysis as mda
 from ARPDF import compute_ARPDF, compare_ARPDF
@@ -83,7 +84,9 @@ def workflow_demo():
         u2.atoms.write("tmp/CCl4_best_init.gro")
         print(f"Molecule {best_mol}: Similarity = {similarity}")
         print(f"Polar axis: {polar_axis}")
-        compare_ARPDF(ARPDF, ARPDF_exp, (X, Y), show_range=8.0)
+        fig = compare_ARPDF(ARPDF, ARPDF_exp, (X, Y), show_range=8.0)
+        fig.savefig("tmp/CCl4_best_init.png")
+        plt.show()
         pass
     X, Y, ARPDF_exp = load_ARPDF_exp("data/CCl4/ARPDF_exp.npy")
     for box in get_box_iter():

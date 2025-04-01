@@ -219,7 +219,7 @@ def show_images(
         elif isinstance(title, str):
             return lambda key: f"{title} {key}"
         else:
-            return lambda key: str(title)
+            return title
 
     N = len(images)
     plot_range = get_xy_range(plot_range)
@@ -248,7 +248,7 @@ def show_images(
     else:
         for ax in axs:
             ax.set_ylabel(ylabel)
-    
+
     if len(images) > 1:
         fig.tight_layout()
         if colorbar in ["align", "last"]:
@@ -261,7 +261,7 @@ def show_images(
                 fig.colorbar(img, ax=axs[i], label=None if i < N else clabel) # Attach colorbar to all images
     elif colorbar != "none":
         fig.colorbar(img, ax=axs[0], label=clabel)
-    plt.show()
+    return fig
 
 
 if __name__ == "__main__":

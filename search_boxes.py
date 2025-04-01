@@ -1,7 +1,7 @@
 import cupy as cp
 import numpy as np
 import MDAnalysis as mda
-from ARPDF import compute_ARPDF, show_ARPDF
+from ARPDF import compute_ARPDF, compare_ARPDF
 from utils import generate_grids, cosine_similarity, preprocess_ARPDF, to_cupy
 from utils import compute_axis_direction, adjust_ccl3_structure
 
@@ -54,7 +54,7 @@ def search_structure(universe, grids_XY, ARPDF_exp, cutoff=10.0, N=512):
         best_ARPDF = None
         for polar_axis, u2, modified_atoms in generate_u2(molecule):
             ARPDF = compute_ARPDF(universe, u2, cutoff, N, grids_XY, modified_atoms=modified_atoms, 
-                                                polar_axis=polar_axis, verbose=False)
+                                    polar_axis=polar_axis, periodic=True, verbose=False, use_cupy=True)
             similarity = cosine_similarity(ARPDF, ARPDF_exp)
             if similarity > best_similarity:
                 best_polar_axis = polar_axis
@@ -79,15 +79,14 @@ def workflow_demo():
         best_mol = max(results, key=lambda x: results[x][3])
         # for molecule, (polar_axis, u2, ARPDF, similarity) in results.items():
         polar_axis, u2, ARPDF, similarity = results[best_mol]
+        universe.atoms.write("tmp/CCl4.gro")
+        u2.atoms.write("tmp/CCl4_best_init.gro")
         print(f"Molecule {best_mol}: Similarity = {similarity}")
-        print(f"  Polar axis: {polar_axis}")
-        show_ARPDF(ARPDF, plot_rmax=9.0, show_rmax=8.0, max_intensity=0.1)
+        print(f"Polar axis: {polar_axis}")
+        compare_ARPDF(ARPDF, ARPDF_exp, (X, Y), show_range=8.0)
         pass
     X, Y, ARPDF_exp = load_ARPDF_exp("data/CCl4/ARPDF_exp.npy")
     for box in get_box_iter():
         universe = get_universe(box)
         results = search_structure(universe, (X, Y), ARPDF_exp)
         dump_results(results)
-
-if __name__ == "__main__":
-    workflow_demo()

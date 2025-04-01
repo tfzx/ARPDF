@@ -10,4 +10,4 @@ AFF = {
 # Atomic Form Factor map for C and CL atoms, pre-fitted Gaussian functions in Fourier space
 def calc_AFF(atom_type: str, S: ArrayType) -> ArrayType:
     xp = cp.get_array_module(S)
-    return AFF[atom_type](xp.exp, S)
+    return AFF[atom_type.upper()](xp.exp, S)

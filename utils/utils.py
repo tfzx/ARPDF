@@ -1,7 +1,8 @@
 import abel
 import cupy as cp
+from matplotlib import pyplot as plt
 import numpy as np
-from typing import List, Optional, Tuple, TypeVar
+from typing import Any, List, Optional, Tuple, TypeVar, Iterable
 
 
 ArrayType = TypeVar("ArrayType", cp.ndarray, np.ndarray)
@@ -36,6 +37,15 @@ def box_shift(dx: ArrayType, box: Optional[List[float]] = None) -> ArrayType:
     cell = box_to_cell(box)
     return dx - xp.matmul(xp.round(xp.matmul(dx, xp.linalg.inv(cell))), cell)
 
+def get_xy_range(xy_range) -> list:
+    if isinstance(xy_range, (float, int)):
+        return [-xy_range, xy_range, -xy_range, xy_range]
+    elif len(xy_range) == 2:
+        xmin, xmax = xy_range
+        return [xmin, xmax, xmin, xmax]
+    else:
+        return list(xy_range)
+
 def generate_grids(xy_range, N: int = 512, M: Optional[int] = None, use_cupy: bool = False) -> Tuple[ArrayType, ArrayType]:
     """
     Generate a 2D grid of N x N points in the range [-rmax, rmax]^2.
@@ -47,13 +57,7 @@ def generate_grids(xy_range, N: int = 512, M: Optional[int] = None, use_cupy: bo
         xp = cp
     else:
         xp = np
-    if isinstance(xy_range, (float, int)):
-        xmin, xmax, ymin, ymax = [-xy_range, xy_range, -xy_range, xy_range]
-    elif len(xy_range) == 2:
-        xmin, xmax = xy_range
-        ymin, ymax = xy_range
-    else:
-        xmin, xmax, ymin, ymax = xy_range
+    xmin, xmax, ymin, ymax = get_xy_range(xy_range)
     if M is None:
         M = N
     x = xp.linspace(xmin, xmax, N, dtype=xp.float32)
@@ -68,11 +72,12 @@ def abel_inversion(image: ArrayType) -> ArrayType:
     xp = cp.get_array_module(image)
     global abel_inv_mat_cache
     def get_matrix(n, xp_name: str):
-        if (n, xp_name) in abel_inv_mat_cache:
-            return abel_inv_mat_cache[(n, xp_name)]
+        key = (n, xp_name)
+        if key in abel_inv_mat_cache:
+            return abel_inv_mat_cache[key]
         trans_mat = abel.Transform(np.eye(n), method='basex', direction='inverse', transform_options={"verbose": False}).transform
         trans_mat = xp.array(trans_mat, dtype=xp.float32)
-        abel_inv_mat_cache[(n, xp_name)] = trans_mat
+        abel_inv_mat_cache[key] = trans_mat
         return trans_mat
     return image @ get_matrix(image.shape[1], xp.__name__)
 
@@ -140,17 +145,18 @@ def preprocess_ARPDF(
     """
     预处理ARPDF数据，包括范围限制、网格重采样和强度归一化。
     
-    参数:
-    ARPDF_raw: 原始ARPDF数据数组。
-    original_range: 原始数据的范围。
-    rmax: 数据处理的最大范围，如果未提供，则默认为original_range的最小绝对值。
-    new_grid_size: 新的网格尺寸，如果提供，则重采样数据到新的网格尺寸。
-    max_intensity: 最大强度值，用于数据归一化，默认为1.0。
+    Parameters:
+        ARPDF_raw: 原始ARPDF数据数组。
+        original_range: 原始数据的范围。
+        rmax: 数据处理的最大范围，如果未提供，则默认为original_range的最小绝对值。
+        new_grid_size: 新的网格尺寸，如果提供，则重采样数据到新的网格尺寸。
+        max_intensity: 最大强度值，用于数据归一化，默认为1.0。
     
-    返回:
-    X: 处理后的X轴网格数据。
-    Y: 处理后的Y轴网格数据。
-    ARPDF: 处理后的ARPDF数据。
+    Returns:
+        (X, Y, ARPDF): 
+        X: 处理后的X轴网格数据。
+        Y: 处理后的Y轴网格数据。
+        ARPDF: 处理后的ARPDF数据。
     """
     if rmax is None:
         rmax = np.min(np.abs(original_range))
@@ -165,6 +171,98 @@ def preprocess_ARPDF(
     if new_grid_size is not None:
         X, Y, ARPDF = resize_ARPDF(ARPDF, (X, Y), new_grid_size)
     return X, Y, ARPDF
+
+def show_images(
+        images: Iterable[Tuple[Any, np.ndarray]], 
+        plot_range = 10.0, 
+        show_range = None, 
+        c_range = None,
+        colorbar = "last",
+        cmap = 'inferno', 
+        title = None, 
+        xlabel="X-Axis",
+        ylabel="Y-Axis",
+        clabel="Intensity",
+        **kwargs
+    ):
+    """
+    Visualize multiple images.
+
+    Parameters:
+        images : Iterable of (title, image) tuples to plot
+        plot_range : Image range in units
+        show_range : Range to show in units
+        c_range : Range to colorbar in units
+        colorbar : Colorbar setting. "last", "none", "align", or "all"
+        cmap : Color map
+        title : Title for subplot
+        xlabel : X-axis label
+        ylabel : Y-axis label
+        clabel : Colorbar label
+    """
+    def get_c_range(c_range):
+        if colorbar == "align" and c_range is None:
+            # Compute the global vmin and vmax for all subplots. Make sure the colormap is the same.
+            all_values = np.array([[image.min(), image.max()] for _, image in images])
+            c_range = all_values[:, 0].min(), all_values[:, 1].max()
+        if c_range is not None:
+            # broadcast to each image if needed
+            c_range = np.array(c_range)
+            if c_range.ndim == 0:
+                c_range = np.tile([-c_range, c_range], (N, 1)) # set [-c_range, c_range] if c_range is a scalar
+            elif c_range.ndim == 1:
+                c_range = np.tile(c_range, (N, 1))
+        return c_range
+    def get_title_map(title):
+        if title is None:
+            return lambda key: str(key)
+        elif isinstance(title, str):
+            return lambda key: f"{title} {key}"
+        else:
+            return title
+
+    N = len(images)
+    plot_range = get_xy_range(plot_range)
+    show_range = get_xy_range(show_range) if show_range is not None else plot_range
+    colorbar = colorbar.strip().lower()
+    c_range = get_c_range(c_range)  # None or ndarray of shape (N, 2)
+    title_map = get_title_map(title)
+    
+    W, H = 5 * N + 1, 5
+    fig, axs = plt.subplots(1, N, figsize=(W, H), sharey=(colorbar != "all"))   # share y axis if colorbar is not "all"
+    axs = np.atleast_1d(axs)  # Ensure axs is always an iterable
+    imgs = []
+    for (i, ax), (key, image) in zip(enumerate(axs), images):
+        img = ax.imshow(image, origin='lower', extent=plot_range, cmap=cmap, **kwargs)
+        imgs.append(img)
+        ax.set_title(title_map(key))
+        ax.set_xlim(show_range[0:2])
+        ax.set_ylim(show_range[2:])
+        ax.set_xlabel(xlabel)
+        if c_range is not None:
+            img.set_clim(c_range[i])
+    
+    # Set y labels
+    if colorbar != "all":
+        axs[0].set_ylabel(ylabel)
+    else:
+        for ax in axs:
+            ax.set_ylabel(ylabel)
+    
+    if len(images) > 1:
+        fig.tight_layout()
+        if colorbar in ["align", "last"]:
+            fig.subplots_adjust(right=(W - 1) / W)  # Adjust layout to leave space for colorbar
+            ax_pos = fig.axes[-1].get_position().bounds
+            cbar_ax = fig.add_axes([(W - 0.8) / W, ax_pos[1], 0.25 / W, ax_pos[3]])  # Define colorbar position
+            fig.colorbar(img, cax=cbar_ax, label=clabel)  # Attach colorbar to the last image
+        elif colorbar == "all":
+            for i, img in enumerate(imgs):
+                fig.colorbar(img, ax=axs[i], label=None if i < N else clabel) # Attach colorbar to all images
+    elif colorbar != "none":
+        fig.colorbar(img, ax=axs[0], label=clabel)
+    plt.show()
+
 
 if __name__ == "__main__":
     # Test box_shift

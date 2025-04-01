@@ -219,7 +219,7 @@ def show_images(
         elif isinstance(title, str):
             return lambda key: f"{title} {key}"
         else:
-            return title
+            return lambda key: str(title)
 
     N = len(images)
     plot_range = get_xy_range(plot_range)

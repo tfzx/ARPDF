@@ -4,6 +4,8 @@ from matplotlib import pyplot as plt
 import numpy as np
 from typing import Any, List, Optional, Tuple, TypeVar, Iterable
 
+from scipy import special
+
 
 ArrayType = TypeVar("ArrayType", cp.ndarray, np.ndarray)
 
@@ -166,11 +168,11 @@ def preprocess_ARPDF(
     y_mask = np.abs(Y_ori[:, 0]) <= rmax
     X = X_ori[y_mask, :][:, x_mask]
     Y = Y_ori[y_mask, :][:, x_mask]
-    ARPDF = ARPDF_raw[y_mask, :][:, x_mask]
+    ARPDF = np.copy(ARPDF_raw[y_mask, :][:, x_mask])
     ARPDF = ARPDF / np.max(np.abs(ARPDF)) * max_intensity
     if new_grid_size is not None:
         X, Y, ARPDF = resize_ARPDF(ARPDF, (X, Y), new_grid_size)
-    return X, Y, ARPDF
+    return np.copy(X), np.copy(Y), np.copy(ARPDF)
 
 def show_images(
         images: Iterable[Tuple[Any, np.ndarray]], 
@@ -262,6 +264,28 @@ def show_images(
     elif colorbar != "none":
         fig.colorbar(img, ax=axs[0], label=clabel)
     return fig
+
+
+
+def Similarity(weights, image1, image2):
+    xp = cp.get_array_module(image1)
+    def inner(w, x1, x2):
+        return xp.einsum("ijk,jk,jk->i", w, x1, x2)
+    C = 0.01
+    def weighted_sim(w, x, y):
+        return (inner(w, x, y) / (xp.sqrt(inner(w, x, x)) + 1e-8) + C) / (xp.sqrt(inner(w, y, y)) + C)
+    return weighted_sim(weights, image1, image2)
+
+def get_circular_weight(R_grids, r0, sigma):
+    """ Get the 2D Rice ditribution at radius r0 with sigma """
+    xp = cp.get_array_module(R_grids)
+    _r0 = xp.asarray(r0)
+    _R = R_grids.reshape((1,) * r0.ndim + R_grids.shape)
+    _r0 = _r0.reshape(_r0.shape + (1,) * R_grids.ndim)
+    # !Note: Don't use cupyx.scipy.special.i0e, because it's instable for large values (may lead to nan)
+    _i0e = special.i0e if xp.__name__ == "numpy" else lambda x: to_cupy(special.i0e(to_numpy(x)))
+    return xp.exp(-(_R-_r0)**2/(2*sigma**2)) * _i0e(_r0*_R/sigma)
+
 
 
 if __name__ == "__main__":

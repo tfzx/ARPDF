@@ -77,6 +77,7 @@ def adjust_ccl3_structure(c_atom, cl_target, other_cls, stretch_distance=0.2, mo
     if modified_atoms is not None:
         modified_atoms.append(c_atom.index)
         modified_atoms.append(cl_target.index)
+        modified_atoms += list(other_cls.indices)
 
     # 更新原子位置
     c_atom.position = new_c_pos

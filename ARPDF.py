@@ -178,9 +178,8 @@ def compute_ARPDF(
     modified_atoms: Optional[List[int]] = None,
     polar_axis = (0, 0, 1),
     periodic: bool = False,
-    verbose: bool = False,
-    use_cupy: bool = True
-) -> np.ndarray:
+    verbose: bool = False
+) -> ArrayType:
     """
     Main pipeline: u1, u2 -> generate diff fields -> FFT -> AFF+filter -> Inverse FFT -> Inverse Abel -> ARPDF
 
@@ -195,12 +194,16 @@ def compute_ARPDF(
         verbose         : if True, show intermediate plots
 
     Returns:
-        ARPDF           : Angularly Resolved Pair Distribution Function (numpy array)
+        ARPDF           : Angularly Resolved Pair Distribution Function. 
+            If grids_XY is given, return the same type as (X, Y). Otherwise, return numpy arrays.
     """
     if grids_XY is None:
-        X, Y = generate_grids(cutoff, N, use_cupy=use_cupy)
+        X, Y = generate_grids(cutoff, N, use_cupy=True)
+        input_type = "numpy"
     else:
         X, Y = grids_XY
+        input_type = cp.get_array_module(grids_XY[0], grids_XY[1]).__name__
+        X, Y = to_cupy(X, Y)
         N = X.shape[0]
     _print_func = print if verbose else lambda *args: None
 
@@ -209,10 +212,9 @@ def compute_ARPDF(
     atom_pairs2, num_sel2 = compute_all_atom_pairs(u2, cutoff, modified_atoms, polar_axis, periodic)
     _print_func(f"Selected {num_sel1} atoms for universe 1, {num_sel2} atoms for universe 2.")
 
-    # Convert to cupy if needed
-    if use_cupy:
-        atom_pairs1 = to_cupy(atom_pairs1)
-        atom_pairs2 = to_cupy(atom_pairs2)
+    # Convert to cupy
+    atom_pairs1 = to_cupy(atom_pairs1)
+    atom_pairs2 = to_cupy(atom_pairs2)
     
     # Compute 2D projected fields for both structures
     _print_func("Computing fields of universe 1...")
@@ -234,16 +236,19 @@ def compute_ARPDF(
 
     # ARPDF computation
     _print_func("Computing ARPDF...")
-    ARPDF = to_numpy(forward_transform(diff_fields, X, Y, Counter(u1.atoms.types)))
+    ARPDF = forward_transform(diff_fields, X, Y, Counter(u1.atoms.types))
     normalize_factor = num_sel1 / len(u1.atoms)
     ARPDF = ARPDF / normalize_factor * 100
 
     if verbose:
-        show_images([("ARPDF", ARPDF)], plot_range=cutoff, show_range=8, cmap="bwr", c_range=0.5*ARPDF.max(), 
-                    clabel="Reconstructed Intensity") #, interpolation='bicubic')
+        xmin, xmax = X.min(), X.max()
+        ymin, ymax = Y.min(), Y.max()
+        img = to_numpy(ARPDF)
+        show_images([("ARPDF", img)], plot_range=to_numpy([xmin, xmax, ymin, ymax]), show_range=8, cmap="bwr", 
+                    c_range=0.5*img.max(), clabel="Reconstructed Intensity") #, interpolation='bicubic')
         plt.show()
 
-    return ARPDF
+    return ARPDF if input_type == "cupy" else to_numpy(ARPDF)
 
 def compare_ARPDF(ARPDF, ARPDF_exp, grids_XY, cos_sim = None, show_range = 8.0):
     if cos_sim is None:

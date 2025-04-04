@@ -1,10 +1,12 @@
+import os
 import abel
 import cupy as cp
 from matplotlib import pyplot as plt
 import numpy as np
 from typing import Any, List, Optional, Tuple, TypeVar, Iterable
-
+import json
 from scipy import special
+import MDAnalysis as mda
 
 
 ArrayType = TypeVar("ArrayType", cp.ndarray, np.ndarray)
@@ -83,14 +85,18 @@ def abel_inversion(image: ArrayType) -> ArrayType:
         return trans_mat
     return image @ get_matrix(image.shape[1], xp.__name__)
 
-def cosine_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType) -> float:
+def cosine_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, weight: Optional[ArrayType] = None) -> float:
     """
     Compute the cosine similarity between two ARPDF.
     """
+    def inner(x1, x2):
+        return xp.einsum("jk,jk,jk", weight, x1, x2)
     xp = cp.get_array_module(ARPDF1)
+    if weight is None:
+        weight = xp.ones_like(ARPDF1)
     _x1 = xp.array(ARPDF1, dtype=xp.float32)
     _x2 = xp.array(ARPDF2, dtype=xp.float32)
-    return xp.vdot(_x1, _x2) / (xp.linalg.norm(_x1) * xp.linalg.norm(_x2) + 1e-8)
+    return inner(_x1, _x2) / (xp.sqrt(inner(_x1, _x1) * inner(_x2, _x2)) + 1e-8)
 
 def _to_cupy(*args) -> list:
     out = []
@@ -145,20 +151,30 @@ def preprocess_ARPDF(
         max_intensity = 1.0
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    预处理ARPDF数据，包括范围限制、网格重采样和强度归一化。
+    Preprocess ARPDF data, including range restriction, grid resampling, and intensity normalization.
     
-    Parameters:
-        ARPDF_raw: 原始ARPDF数据数组。
-        original_range: 原始数据的范围。
-        rmax: 数据处理的最大范围，如果未提供，则默认为original_range的最小绝对值。
-        new_grid_size: 新的网格尺寸，如果提供，则重采样数据到新的网格尺寸。
-        max_intensity: 最大强度值，用于数据归一化，默认为1.0。
+    Parameters
+    ----------
+    ARPDF_raw: ndarray
+        Original ARPDF data.
+    original_range: float or list of float
+        Original data range.
+    rmax: float, optional
+        The maximum range for data processing. If not provided, it defaults to the minimum absolute value of original_range.
+    new_grid_size: Tuple[int, int], optional
+        The new grid size for resampling. If provided, the data will be resampled to the new grid size.
+        !Note: This function is not implemented yet.
+    max_intensity: float, optional
+        The maximum intensity value for normalization. Default is 1.0.
     
-    Returns:
-        (X, Y, ARPDF): 
-        X: 处理后的X轴网格数据。
-        Y: 处理后的Y轴网格数据。
-        ARPDF: 处理后的ARPDF数据。
+    Returns
+    -------
+    X: ndarray
+        The processed X-axis grid data.
+    Y: ndarray
+        The processed Y-axis grid data.
+    ARPDF: ndarray
+        The processed ARPDF data.
     """
     if rmax is None:
         rmax = np.min(np.abs(original_range))
@@ -286,7 +302,73 @@ def get_circular_weight(R_grids, r0, sigma):
     _i0e = special.i0e if xp.__name__ == "numpy" else lambda x: to_cupy(special.i0e(to_numpy(x)))
     return xp.exp(-(_R-_r0)**2/(2*sigma**2)) * _i0e(_r0*_R/sigma)
 
+def load_exp_data(dir: str, rmax: float = 10.0, new_grid_size = None, max_intensity = 1.0) -> None:
+    """
+    Load experimental data from a directory.
+    The directory should contain a metadata file "metadata.json".
+    The metadata file should contain the following keys:
+    - "expdata_info":
+        - "expdata_name": str, the name of the experimental data file. Should be a `.npy` file
+        - "xy_range": float or list of float
+    The experimental data will be loaded from "expdata_name".
 
+    Parameters
+    ----------
+    dir : str
+        The directory containing the experimental data file and metadata file.
+    rmax, new_grid_size, max_intensity : ...
+        The same parameters as `preprocess_ARPDF`
+
+    Returns
+    -------
+    X : ndarray
+        The X-axis grid data.
+    Y : ndarray
+        The Y-axis grid data.
+    ARPDF : ndarray
+        The processed ARPDF data.
+    """
+    with open(os.path.join(dir, "metadata.json"), "r") as f:
+        expdata_info = json.load(f)["expdata_info"]
+    filename = os.path.join(dir, expdata_info["expdata_name"])
+    expdata = np.load(filename)
+    return preprocess_ARPDF(expdata, expdata_info["xy_range"], rmax, new_grid_size, max_intensity)
+
+def load_structure_data(dir: str):
+    """
+    Load structure data from a directory.
+    The directory should contain a metadata file "metadata.json".
+    The metadata file should contain the following keys:
+    - "structure_info":
+        - "u1_name": str, the name of the initial structure file.
+        - "u2_name": str, the name of the modified structure file. This is optional.
+        - "polar_axis": list of float, the polar axis of the second structure
+        - "modified_atoms": list of int, the indices of the modified atoms in the second structure
+
+    Parameters
+    ----------
+    dir : str
+        The directory containing the structure data file and metadata file.
+    
+    Returns
+    -------
+    u1: mda.Universe
+        the initial structure
+    u2: mda.Universe
+        the modified structure. None if no modified structure is provided.
+    polar_axis: list of float
+    modified_atoms: list of int
+        the indices of the modified atoms in the second structure
+    """
+    with open(os.path.join(dir, "metadata.json"), "r") as f:
+        structure_info = json.load(f)["structure_info"]
+    u1 = mda.Universe(os.path.join(dir, structure_info["u1_name"]))
+    u2 = None
+    if "u2_name" in structure_info:
+        u2 = mda.Universe(os.path.join(dir, structure_info["u2_name"]))
+    polar_axis = structure_info["polar_axis"]
+    modified_atoms = structure_info["modified_atoms"]
+    return u1, u2, polar_axis, modified_atoms
 
 if __name__ == "__main__":
     # Test box_shift

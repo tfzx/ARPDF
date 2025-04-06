@@ -1,17 +1,13 @@
 from collections import Counter
 from typing import Dict, List, Optional, Tuple
-import cupy as cp
+# import cupy as cp
 from matplotlib import pyplot as plt
 import numpy as np
 import MDAnalysis as mda
 import MDAnalysis.analysis.distances as mda_dist
-from cupyx.scipy.ndimage import gaussian_filter as gaussian_filter_cp
 from scipy.ndimage import gaussian_filter as gaussian_filter_np
-from utils import (
-    generate_field_cuda, box_shift, generate_grids, calc_AFF, abel_inversion, 
-    to_cupy, to_numpy, show_images, cosine_similarity
-)
-from utils import ArrayType
+from utils import box_shift, generate_grids, calc_AFF, show_images
+from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, cosine_similarity, generate_field
 
 def compute_all_atom_pairs(
         universe: mda.Universe, 
@@ -57,7 +53,7 @@ def compute_all_atom_pairs(
     # Step 4: Compute r values and theta values
     r_vals = dist_box[mask]
     vectors = box_shift(np.array(selected_group.positions)[j_idx] - np.array(center_group.positions)[i_idx], box)
-    polar_axis = np.asarray(polar_axis, dtype=cp.float32)
+    polar_axis = np.asarray(polar_axis, dtype=np.float32)
     polar_axis /= np.linalg.norm(polar_axis)  # normalize
     theta_vals = np.arccos(np.clip(np.sum(vectors * polar_axis, axis=1) / np.linalg.norm(vectors, axis=1), -1.0, 1.0))
 
@@ -77,13 +73,36 @@ def compute_all_atom_pairs(
 
     return atom_pairs, len(selected_group)
 
-def generate_field(X: ArrayType, Y: ArrayType, r_vals: ArrayType, theta_vals: ArrayType, delta: np.float32) -> ArrayType:
-    """
-    Wrapper for field generation.
-    """
-    xp = cp.get_array_module(X, Y, r_vals, theta_vals)
-    field = generate_field_cuda(X, Y, r_vals, theta_vals, delta)
-    return field if xp.__name__ == "cupy" else field.get()
+
+def get_atoms_pos(
+        universe: mda.Universe, 
+        modified_atoms: List[int], 
+        cutoff: float = 10.0, 
+        periodic = False
+    ) -> Tuple[np.ndarray, np.ndarray, Dict[Tuple[str, str], np.ndarray]]:
+    center_group = universe.atoms[modified_atoms]
+    around_group = universe.select_atoms(f"around {cutoff} group center", center=center_group, periodic=periodic)
+    if periodic:
+        _center = np.mean(center_group.positions, axis=0)
+        around_group.positions = _center[None, :] + box_shift(around_group.positions - _center[None, :], box=universe.dimensions)
+    concat_group = center_group + around_group
+    
+    mask = np.triu(np.ones((len(center_group), len(concat_group)), dtype=np.bool_), k=1)
+    i_idx, j_idx = np.nonzero(mask)
+
+    all_atom_types = sorted(set(universe.atoms.types))
+    atom_types_center = np.array(center_group.types, dtype="<U4")
+    atom_types_concat = np.array(concat_group.types, dtype="<U4")
+    atom_pair_types = np.stack([atom_types_center[i_idx], atom_types_concat[j_idx]], axis=1)
+    atom_pair_types.sort(axis=1)
+    ij_idx = np.stack([i_idx, j_idx], axis=1)
+
+    atom_pairs = {}
+    for i, type1 in enumerate(all_atom_types):
+        for type2 in all_atom_types[i:]:
+            pair_mask = np.all(atom_pair_types == [type1, type2], axis=1)
+            atom_pairs[(type1, type2)] = ij_idx[pair_mask]
+    return center_group.positions, around_group.positions, center_group.masses, atom_pairs
 
 def compute_fields(
     atom_pairs: Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]],
@@ -130,7 +149,7 @@ def forward_transform(diff_fields: Dict[Tuple[str, str], ArrayType], X: ArrayTyp
     Returns:
         ARPDF : 2D numpy array of Angularly Resolved Pair Distribution Function
     """
-    xp = cp.get_array_module(X, Y)
+    xp = get_array_module(X)
     N = X.shape[0]
     h = X[1, 1] - X[0, 0]  # grid spacing
 
@@ -164,7 +183,11 @@ def forward_transform(diff_fields: Dict[Tuple[str, str], ArrayType], X: ArrayTyp
 
     # Smoothing & r-weighting
     sigma0 = 0.4
-    _gaussian_filter = gaussian_filter_cp if xp.__name__ == "cupy" else gaussian_filter_np
+    if xp.__name__ == "cupy":
+        from cupyx.scipy.ndimage import gaussian_filter as gaussian_filter_cp
+        _gaussian_filter = gaussian_filter_cp
+    else:
+        _gaussian_filter = gaussian_filter_np
     ARPDF = _gaussian_filter(Inverse_Abel_total, sigma=sigma0/h) * (X**2 + Y**2)
 
     return ARPDF
@@ -182,40 +205,54 @@ def compute_ARPDF(
 ) -> ArrayType:
     """
     Main pipeline: u1, u2 -> generate diff fields -> FFT -> AFF+filter -> Inverse FFT -> Inverse Abel -> ARPDF
+    Use cupy for the intermediate steps if available.
+    If grids_XY is given, use it directly. Otherwise, generate grids.
 
-    Parameters:
-        u1, u2          : MDAnalysis Universe objects (before/after structure)
-        cutoff          : cutoff radius (A)
-        N               : grid size (NxN)
-        grids_XY        : optional pre-generated grids
-        modified_atoms  : optional list of atom indices to modify
-        polar_axis      : polarization axis of the laser
-        periodic        : if True, consider periodic boundary condition
-        verbose         : if True, show intermediate plots
+    Parameters
+    ----------
+    u1, u2          : MDAnalysis Universe objects (before/after structure)
+    cutoff          : cutoff radius (A)
+    N               : grid size (NxN)
+    grids_XY        : optional pre-generated grids
+    modified_atoms  : optional list of atom indices to modify
+    polar_axis      : polarization axis of the laser
+    periodic        : if True, consider periodic boundary condition
+    verbose         : if True, show intermediate plots
 
-    Returns:
-        ARPDF           : Angularly Resolved Pair Distribution Function. 
-            If grids_XY is given, return the same type as (X, Y). Otherwise, return numpy arrays.
+    Returns
+    -------
+    ARPDF           : Angularly Resolved Pair Distribution Function. 
+        If grids_XY is given, return the same type as (X, Y). Otherwise, return numpy arrays.
     """
+    _print_func = print if verbose else lambda *args: None
+    try:
+        import cupy
+        has_cupy = True
+        _print_func("Using cupy to compute ARPDF...")
+    except ImportError:
+        has_cupy = False
+        _print_func("Cannot find cupy, using numpy instead.")
+
     if grids_XY is None:
-        X, Y = generate_grids(cutoff, N, use_cupy=True)
+        X, Y = generate_grids(cutoff, N)
         input_type = "numpy"
     else:
         X, Y = grids_XY
-        input_type = cp.get_array_module(grids_XY[0], grids_XY[1]).__name__
-        X, Y = to_cupy(X, Y)
+        input_type = get_array_module(grids_XY[0]).__name__
         N = X.shape[0]
-    _print_func = print if verbose else lambda *args: None
+
+    if has_cupy and input_type == "numpy":
+        X, Y = to_cupy(X, Y)
 
     # Compute all atom pairs
     atom_pairs1, num_sel1 = compute_all_atom_pairs(u1, cutoff, modified_atoms, polar_axis, periodic)
     atom_pairs2, num_sel2 = compute_all_atom_pairs(u2, cutoff, modified_atoms, polar_axis, periodic)
+    # Convert to cupy if necessary
+    if has_cupy:
+        atom_pairs1 = to_cupy(atom_pairs1)
+        atom_pairs2 = to_cupy(atom_pairs2)
     _print_func(f"Selected {num_sel1} atoms for universe 1, {num_sel2} atoms for universe 2.")
 
-    # Convert to cupy
-    atom_pairs1 = to_cupy(atom_pairs1)
-    atom_pairs2 = to_cupy(atom_pairs2)
-    
     # Compute 2D projected fields for both structures
     _print_func("Computing fields of universe 1...")
     fields1 = compute_fields(atom_pairs1, X, Y, verbose)

@@ -5,7 +5,8 @@ import numpy as np
 import MDAnalysis as mda
 import json
 from ARPDF import compute_ARPDF, compare_ARPDF
-from utils import generate_grids, cosine_similarity, preprocess_ARPDF, to_cupy, box_shift, get_circular_weight, Similarity
+from utils import preprocess_ARPDF, box_shift
+from utils.core_functions import cosine_similarity, to_cupy, get_circular_weight, weighted_similarity
 from utils import compute_axis_direction, adjust_ccl3_structure
 
 def search_structure(universe, grids_XY, ARPDF_exp, cutoff=10.0, metric='cosine', weight_cutoff=4.0):
@@ -48,7 +49,7 @@ def search_structure(universe, grids_XY, ARPDF_exp, cutoff=10.0, metric='cosine'
     X, Y, ARPDF_exp = to_cupy(*grids_XY, ARPDF_exp)
     metric_func = {
         'cosine': lambda x, y: cosine_similarity(x, y, cos_weight), 
-        'circle': lambda x, y: cp.vdot(r_weight, Similarity(circular_weights, x, y))
+        'circle': lambda x, y: cp.vdot(r_weight, weighted_similarity(circular_weights, x, y))
     }[metric]
 
     molecule_list = sample_center_molecules()

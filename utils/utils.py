@@ -257,9 +257,9 @@ def load_structure_data(data_dir: str):
         the initial structure
     u2: mda.Universe
         the modified structure. None if no modified structure is provided.
-    polar_axis: list of float
     modified_atoms: list of int
         the indices of the modified atoms in the second structure
+    polar_axis: list of float
     """
     with open(os.path.join(data_dir, "metadata.json"), "r") as f:
         structure_info = json.load(f)["structure_info"]

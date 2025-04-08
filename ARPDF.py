@@ -171,10 +171,10 @@ def forward_transform(diff_fields: Dict[Tuple[str, str], ArrayType], X: ArrayTyp
         total_fft += fft
 
     # Filter in Fourier space
-    _filter = (1 - xp.exp(-(kX**2 / 0.3 + kY**2 / 0.1)))**3 * xp.exp(-0.08 * S**2)
+    # _filter = (1 - xp.exp(-(kX**2 / 0.3 + kY**2 / 0.1)))**3 * xp.exp(-0.08 * S**2)
 
     # Inverse FFT to real space
-    total_fft = total_fft * _filter / I_atom
+    total_fft = total_fft / I_atom #* _filter
     total_ifft = xp.fft.ifft2(total_fft).real
 
     # Inverse Abel transform to get ARPDF
@@ -182,12 +182,12 @@ def forward_transform(diff_fields: Dict[Tuple[str, str], ArrayType], X: ArrayTyp
     Inverse_Abel_total = abel_inversion(total_ifft) / h
 
     # Smoothing & r-weighting
-    sigma0 = 0.4
     if xp.__name__ == "cupy":
         from cupyx.scipy.ndimage import gaussian_filter as gaussian_filter_cp
         _gaussian_filter = gaussian_filter_cp
     else:
         _gaussian_filter = gaussian_filter_np
+    sigma0 = 0.4
     ARPDF = _gaussian_filter(Inverse_Abel_total, sigma=sigma0/h) * (X**2 + Y**2)
 
     return ARPDF

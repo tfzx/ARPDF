@@ -1,0 +1,14 @@
+{
+    "name": "CCl4",
+    "structure_info": {
+        "u1_name": "CCl4.gro",
+        "u2_name": "CCl4_modified.gro",
+        "polar_axis": [0.85692924, 0.47545751, 0.19902873],
+        "modified_atoms": [515, 516, 517, 518, 519, 645]
+    },
+    "expdata_info": {
+        "expdata_name": "ARPDF_exp.npy",
+        "xy_range": 9.924650203173275
+    }
+
+}

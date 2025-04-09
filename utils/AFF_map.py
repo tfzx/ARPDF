@@ -1,6 +1,7 @@
-import cupy as cp
-import numpy as np
-from utils.utils import ArrayType
+from typing import TypeVar
+from utils.utils import ArrayType, get_array_module
+
+ArrayOrTensor = TypeVar("ArrayOrTensor", ArrayType, "torch.Tensor") # type: ignore
 
 AFF = {
     "C": lambda exp_func, S: 22.71820056 * exp_func(-S**2 / (2.93693829**2)) + 8.95935118 * exp_func(-S**2 / (8.59208848**2)),
@@ -8,6 +9,6 @@ AFF = {
 }
 
 # Atomic Form Factor map for C and CL atoms, pre-fitted Gaussian functions in Fourier space
-def calc_AFF(atom_type: str, S: ArrayType) -> ArrayType:
-    xp = cp.get_array_module(S)
+def calc_AFF(atom_type: str, S: ArrayOrTensor) -> ArrayOrTensor:
+    xp = get_array_module(S)
     return AFF[atom_type.upper()](xp.exp, S)

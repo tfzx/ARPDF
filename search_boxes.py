@@ -43,7 +43,6 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
             if len(other_cls) < 3:
                 raise ValueError(f"分子 {mol_number} 中 Cl 原子数量不足，无法调整 CCl₃ 结构！")
 
-<<<<<<< HEAD
             # 计算 C->Cl 方向
             polar_axis = compute_axis_direction(target_c, target_cl, box=box)
 
@@ -59,11 +58,6 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
             results.append((polar_axis, u2, modified_atoms))
 
         return results
-=======
-        # 调整 CCl₃ 结构
-        modified_atoms = []
-        adjust_ccl3_structure(target_c, target_cl, other_cls, stretch_distance=2, modified_atoms=modified_atoms, box=box)
->>>>>>> 390515cc4e5d776f306fd1196d44c864bcadc36d
 
 
     X, Y, ARPDF_exp = to_cupy(*grids_XY, ARPDF_exp)
@@ -91,19 +85,11 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
         best_u2 = None
         best_ARPDF = None
         best_modified_atoms = None
-<<<<<<< HEAD
         for polar_axis, u2, modified_atoms in generate_u2(molecule,stretch_distances=stretch_values):
             ARPDF = compute_ARPDF(universe, u2, cutoff, N, (X, Y), modified_atoms=modified_atoms, 
                                     polar_axis=polar_axis, periodic=True, verbose=False)
             similarity = cp.vdot(r_weight, Similarity(circular_weights, ARPDF, ARPDF_exp)).get()
             # similarity = cosine_similarity(ARPDF, ARPDF_exp).get()
-=======
-        for polar_axis, u2, modified_atoms in generate_u2(molecule):
-            ARPDF = compute_ARPDF(universe, u2, cutoff, 256, (X, Y), modified_atoms=modified_atoms, 
-                                    polar_axis=polar_axis, periodic=True, filter_fourier=filter_fourier, verbose=False)
-            # similarity = cp.vdot(r_weight, Similarity(circular_weights, ARPDF, ARPDF_exp)).get()
-            similarity = metric_func(ARPDF, ARPDF_exp).get()
->>>>>>> 390515cc4e5d776f306fd1196d44c864bcadc36d
             if similarity > best_similarity:
                 best_polar_axis = polar_axis
                 best_similarity = similarity

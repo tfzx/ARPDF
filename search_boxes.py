@@ -86,10 +86,10 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
         best_ARPDF = None
         best_modified_atoms = None
         for polar_axis, u2, modified_atoms in generate_u2(molecule,stretch_distances=stretch_values):
-            ARPDF = compute_ARPDF(universe, u2, cutoff, N, (X, Y), modified_atoms=modified_atoms, 
-                                    polar_axis=polar_axis, periodic=True, verbose=False)
-            similarity = cp.vdot(r_weight, Similarity(circular_weights, ARPDF, ARPDF_exp)).get()
-            # similarity = cosine_similarity(ARPDF, ARPDF_exp).get()
+            ARPDF = compute_ARPDF(universe, u2, cutoff, 256, (X, Y), modified_atoms=modified_atoms, 
+                                    polar_axis=polar_axis, periodic=True, filter_fourier=filter_fourier, verbose=False)
+            # similarity = cp.vdot(r_weight, Similarity(circular_weights, ARPDF, ARPDF_exp)).get()
+            similarity = metric_func(ARPDF, ARPDF_exp).get()
             if similarity > best_similarity:
                 best_polar_axis = polar_axis
                 best_similarity = similarity

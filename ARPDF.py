@@ -1,5 +1,5 @@
 from collections import Counter
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 # import cupy as cp
 from matplotlib import pyplot as plt
 import numpy as np
@@ -8,6 +8,7 @@ import MDAnalysis.analysis.distances as mda_dist
 from scipy.ndimage import gaussian_filter as gaussian_filter_np
 from utils import box_shift, generate_grids, calc_AFF, show_images
 from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, cosine_similarity, generate_field
+from types import ModuleType
 
 def compute_all_atom_pairs(
         universe: mda.Universe, 
@@ -138,7 +139,12 @@ def get_diff_fields(
     """
     return {pair_type: fields2[pair_type] - fields1[pair_type] for pair_type in fields1}
 
-def forward_transform(diff_fields: Dict[Tuple[str, str], ArrayType], X: ArrayType, Y: ArrayType, type_counts: Dict[str, int]) -> ArrayType:
+def forward_transform(
+        diff_fields: Dict[Tuple[str, str], ArrayType], 
+        X: ArrayType, Y: ArrayType, 
+        type_counts: Dict[str, int], 
+        filter_fourier: Optional[Callable[[ArrayType, ArrayType, ModuleType], ArrayType]] = None
+    ) -> ArrayType:
     """
     Forward Fourier filtering, Atomic Form Factor weighting, Inverse FFT, Inverse Abel Transform to get ARPDF.
 
@@ -171,10 +177,14 @@ def forward_transform(diff_fields: Dict[Tuple[str, str], ArrayType], X: ArrayTyp
         total_fft += fft
 
     # Filter in Fourier space
-    # _filter = (1 - xp.exp(-(kX**2 / 0.3 + kY**2 / 0.1)))**3 * xp.exp(-0.08 * S**2)
+    if filter_fourier is None:
+        # _filter = (1 - xp.exp(-(kX**2 / 0.3 + kY**2 / 0.1)))**3 * xp.exp(-0.08 * S**2)
+        _filter = 1.0
+    else:
+        _filter = filter_fourier(kX, kY, xp)
 
     # Inverse FFT to real space
-    total_fft = total_fft / I_atom #* _filter
+    total_fft = total_fft * _filter / I_atom
     total_ifft = xp.fft.ifft2(total_fft).real
 
     # Inverse Abel transform to get ARPDF
@@ -188,7 +198,7 @@ def forward_transform(diff_fields: Dict[Tuple[str, str], ArrayType], X: ArrayTyp
     else:
         _gaussian_filter = gaussian_filter_np
     sigma0 = 0.4
-    ARPDF = _gaussian_filter(Inverse_Abel_total, sigma=sigma0/h) * (X**2 + Y**2)
+    ARPDF = _gaussian_filter(Inverse_Abel_total, sigma=sigma0/h, mode="constant") * (X**2 + Y**2)
 
     return ARPDF
 
@@ -201,6 +211,7 @@ def compute_ARPDF(
     modified_atoms: Optional[List[int]] = None,
     polar_axis = (0, 0, 1),
     periodic: bool = False,
+    filter_fourier: Optional[Callable[[ArrayType, ArrayType, ModuleType], ArrayType]] = None,
     verbose: bool = False
 ) -> ArrayType:
     """
@@ -273,7 +284,7 @@ def compute_ARPDF(
 
     # ARPDF computation
     _print_func("Computing ARPDF...")
-    ARPDF = forward_transform(diff_fields, X, Y, Counter(u1.atoms.types))
+    ARPDF = forward_transform(diff_fields, X, Y, Counter(u1.atoms.types), filter_fourier)
     normalize_factor = num_sel1 / len(u1.atoms)
     ARPDF = ARPDF / normalize_factor * 100
 

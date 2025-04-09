@@ -9,7 +9,7 @@ from utils import preprocess_ARPDF, box_shift
 from utils.core_functions import cosine_similarity, to_cupy, get_circular_weight, weighted_similarity
 from utils import compute_axis_direction, adjust_ccl3_structure
 
-def search_structure(universe, grids_XY, ARPDF_exp, cutoff=10.0, metric='cosine', weight_cutoff=4.0):
+def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=10.0, metric='cosine', weight_cutoff=4.0):
 
     def sample_center_molecules():
         """ Return a list of atoms indices of molecules """
@@ -70,7 +70,7 @@ def search_structure(universe, grids_XY, ARPDF_exp, cutoff=10.0, metric='cosine'
         best_modified_atoms = None
         for polar_axis, u2, modified_atoms in generate_u2(molecule):
             ARPDF = compute_ARPDF(universe, u2, cutoff, 256, (X, Y), modified_atoms=modified_atoms, 
-                                    polar_axis=polar_axis, periodic=True, verbose=False)
+                                    polar_axis=polar_axis, periodic=True, filter_fourier=filter_fourier, verbose=False)
             # similarity = cp.vdot(r_weight, Similarity(circular_weights, ARPDF, ARPDF_exp)).get()
             similarity = metric_func(ARPDF, ARPDF_exp).get()
             if similarity > best_similarity:
@@ -82,24 +82,20 @@ def search_structure(universe, grids_XY, ARPDF_exp, cutoff=10.0, metric='cosine'
         results[molecule] = (best_polar_axis, best_u2, best_ARPDF, best_similarity, best_modified_atoms)
     return results
 
-def workflow_demo(exp_name: str="exp", metric: str="cosine", weight_cutoff=4.0):
+def workflow_demo(X, Y, ARPDF_ref, filter_fourier=None, exp_name: str="exp", metric: str="cosine", weight_cutoff=4.0):
     def get_box_iter():
         """Run and sample boxes from the MD simulation."""
         return [mda.Universe('data/CCl4/CCl4.gro')]
     def get_universe(box):
         return box
-    def load_ARPDF_exp(file_name):
-        ARPDF_exp_raw = np.load(file_name)
-        ori_range = 9.924650203173275
-        X, Y, ARPDF_exp = preprocess_ARPDF(ARPDF_exp_raw, ori_range, rmax=9.0)
-        return X, Y, ARPDF_exp
     def dump_results(results):
         best_mol = max(results, key=lambda x: results[x][3])
         polar_axis, u2, ARPDF, similarity, modified_atoms = results[best_mol]
+        modified_atoms = [int(x) for x in modified_atoms]
         print(f"Molecule {best_mol}: Similarity = {similarity}")
         print(f"Polar axis: {polar_axis}")
         print(f"Modified atoms: {modified_atoms}")
-        fig = compare_ARPDF(ARPDF, ARPDF_exp, (X, Y), cos_sim=similarity, show_range=8.0)
+        fig = compare_ARPDF(ARPDF, ARPDF_ref, (X, Y), cos_sim=similarity, show_range=8.0)
         fig.savefig(f"{out_dir}/CCl4_best_init.png")
         # plt.show()
         universe.atoms.write(f"{out_dir}/CCl4.gro")
@@ -117,7 +113,7 @@ def workflow_demo(exp_name: str="exp", metric: str="cosine", weight_cutoff=4.0):
                     "u1_name": "CCl4.gro",
                     "u2_name": "CCl4_best_init.gro",
                     "polar_axis": [float(x) for x in polar_axis],
-                    "modified_atoms": [int(x) for x in modified_atoms]
+                    "modified_atoms": modified_atoms
                 }
             }, f, indent=4)
         return
@@ -125,8 +121,8 @@ def workflow_demo(exp_name: str="exp", metric: str="cosine", weight_cutoff=4.0):
     out_dir = f"tmp/{exp_name}"
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
-    X, Y, ARPDF_exp = load_ARPDF_exp("data/CCl4/ARPDF_exp.npy")
+    # X, Y, ARPDF_ref = load_ARPDF_exp("data/CCl4/ARPDF_exp.npy")
     for box in get_box_iter():
         universe = get_universe(box)
-        results = search_structure(universe, (X, Y), ARPDF_exp, metric=metric, weight_cutoff=weight_cutoff)
+        results = search_structure(universe, (X, Y), ARPDF_ref, filter_fourier=filter_fourier, metric=metric, weight_cutoff=weight_cutoff)
         dump_results(results)

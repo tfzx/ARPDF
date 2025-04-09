@@ -18,7 +18,7 @@ from utils.core_functions_torch import generate_gaussian_kernel, gaussian_filter
 
 
 class ARPDFModel:
-    def __init__(self, X, Y, type_counts: Dict[str, int], cutoff = 10.0, field_batch_size=256):
+    def __init__(self, X, Y, type_counts: Dict[str, int], filter_fourier = None, cutoff = 10.0, field_batch_size=256):
         super(ARPDFModel, self).__init__()
         self.X = toTensor(X).float().contiguous()
         self.Y = toTensor(Y).float().contiguous()
@@ -28,7 +28,7 @@ class ARPDFModel:
         self.h = max(self.hx, self.hy)
         self.cutoff = cutoff
         self.field_batch_size = field_batch_size
-        self.prepare_transform(type_counts)
+        self.prepare_transform(type_counts, filter_fourier)
 
     def set_system(self, around_pos, atom_pairs: Dict[str, Any], polar_axis):
         device = self.X.device
@@ -40,7 +40,7 @@ class ARPDFModel:
         polar_axis /= torch.linalg.norm(polar_axis)
         self.polar_axis = polar_axis
         
-    def prepare_transform(self, type_counts: Dict[str, int]):
+    def prepare_transform(self, type_counts: Dict[str, int], filter_fourier = None):
         N = self.X.shape[0]
 
         # Fourier grids
@@ -54,7 +54,11 @@ class ARPDFModel:
         for atom_type in type_counts:
             setattr(self, f"AFF_{atom_type}", calc_AFF(atom_type, S))
         # Filter in Fourier space
-        filter_ = (1 - torch.exp(-(kX**2 / 0.3 + kY**2 / 0.1)))**3 * torch.exp(-0.08 * S**2)
+        if filter_fourier is None:
+            # filter_ = (1 - torch.exp(-(kX**2 / 0.3 + kY**2 / 0.1)))**3 * torch.exp(-0.08 * S**2)
+            filter_ = 1.0
+        else:
+            filter_ = filter_fourier(kX, kY, torch)
         # Atomic form factor normalization
         I_atom = sum([num_atom * self.AFFs(atom)**2 for atom, num_atom in type_counts.items()]) / sum(type_counts.values())
         self.factor = filter_ / I_atom
@@ -110,7 +114,9 @@ class ARPDFOptimizer:
             X, Y,
             ARPDF_exp, 
             type_counts: Dict[str, int],
+            filter_fourier = None,
             cutoff=10.0,
+            weight_cutoff=6.0,
             lr=0.01, 
             gamma=0.995,
             f_lb=0.0, 
@@ -124,7 +130,7 @@ class ARPDFOptimizer:
         self.ARPDF_exp = toTensor(ARPDF_exp, device=device).float().contiguous()
         self.h = X[1, 1] - X[0, 0]
         self.type_counts = type_counts
-        self.model = ARPDFModel(X, Y, type_counts, cutoff, field_batch_size=128).to(device=device)
+        self.model = ARPDFModel(X, Y, type_counts, filter_fourier, cutoff, field_batch_size=128).to(device=device)
         self.cutoff = cutoff
         self.f_lb = f_lb
         self.lr = lr
@@ -133,7 +139,7 @@ class ARPDFOptimizer:
         self.beta = beta
         self.epochs = epochs
         self.device = device
-        self._prepare_weights(weight_cutoff=6.0)
+        self._prepare_weights(weight_cutoff=weight_cutoff)
 
     def set_system(
             self, 

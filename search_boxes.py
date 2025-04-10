@@ -16,35 +16,49 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
         cl_atoms = universe.atoms.select_atoms("name Cl")
         return list(cl_atoms.indices)
     
-    def generate_u2(molecule, periodic=None):
-        """ Return List[(polar_axis, u2)] """
+    
 
+    def generate_u2(molecule, stretch_distances, periodic=None):
+        """ 
+        Return List[(polar_axis, u2, modified_atoms)] for different stretch_distances.
+        """
+
+        results = []
         box = universe.dimensions if periodic else None
 
-        u2 = universe.copy()
-    
-        target_cl = u2.atoms.select_atoms(f"name Cl and index {molecule}")
-        if len(target_cl) == 0:
-            raise ValueError(f"未找到编号为 {molecule} 的 Cl 原子！")
+        for distance in stretch_distances:
+            u2 = universe.copy()
 
-        target_cl = target_cl[0]
-        mol_number = target_cl.resid  # 获取分子编号 (Residue ID)
+            target_cl = u2.atoms.select_atoms(f"name Cl and index {molecule}")
+            if len(target_cl) == 0:
+                raise ValueError(f"未找到编号为 {molecule} 的 Cl 原子！")
 
-        molecule_atoms = u2.select_atoms(f"resid {mol_number}")
-        target_c = molecule_atoms.select_atoms("name C")[0]  # 取第一个 C 原子
-        other_cls = molecule_atoms.select_atoms(f"name Cl and not (index {molecule})")  # 其他 Cl 原子
+            target_cl = target_cl[0]
+            mol_number = target_cl.resid  # 获取分子编号 (Residue ID)
 
-        if len(other_cls) < 3:
-            raise ValueError(f"分子 {mol_number} 中 Cl 原子数量不足，无法调整 CCl₃ 结构！")
+            molecule_atoms = u2.select_atoms(f"resid {mol_number}")
+            target_c = molecule_atoms.select_atoms("name C")[0]  # 取第一个 C 原子
+            other_cls = molecule_atoms.select_atoms(f"name Cl and not (index {molecule})")  # 其他 Cl 原子
 
-        # 计算 C->Cl 方向
-        polar_axis = compute_axis_direction(target_c, target_cl, box=box)
+            if len(other_cls) < 3:
+                raise ValueError(f"分子 {mol_number} 中 Cl 原子数量不足，无法调整 CCl₃ 结构！")
 
-        # 调整 CCl₃ 结构
-        modified_atoms = []
-        adjust_ccl3_structure(target_c, target_cl, other_cls, stretch_distance=2, modified_atoms=modified_atoms, box=box)
+            # 计算 C->Cl 方向
+            polar_axis = compute_axis_direction(target_c, target_cl, box=box)
 
-        return [(polar_axis, u2, modified_atoms)]
+            # 调整 CCl₃ 结构
+            modified_atoms = []
+            adjust_ccl3_structure(
+                target_c, target_cl, other_cls, 
+                stretch_distance=distance, 
+                modified_atoms=modified_atoms, 
+                box=box
+            )
+
+            results.append((polar_axis, u2, modified_atoms))
+
+        return results
+
 
     X, Y, ARPDF_exp = to_cupy(*grids_XY, ARPDF_exp)
     metric_func = {
@@ -61,6 +75,9 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
     r_weight = cp.exp(-cp.maximum(r0_arr - weight_cutoff, 0)**2 / (2 * (1 / 3)**2))
     r_weight /= r_weight.sum()
     results = {}
+
+    stretch_values = [1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4]
+
     for molecule in molecule_list:
         # TODO: parallelize this loop
         best_similarity = -np.inf
@@ -68,7 +85,7 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
         best_u2 = None
         best_ARPDF = None
         best_modified_atoms = None
-        for polar_axis, u2, modified_atoms in generate_u2(molecule):
+        for polar_axis, u2, modified_atoms in generate_u2(molecule,stretch_distances=stretch_values):
             ARPDF = compute_ARPDF(universe, u2, cutoff, 256, (X, Y), modified_atoms=modified_atoms, 
                                     polar_axis=polar_axis, periodic=True, filter_fourier=filter_fourier, verbose=False)
             # similarity = cp.vdot(r_weight, Similarity(circular_weights, ARPDF, ARPDF_exp)).get()

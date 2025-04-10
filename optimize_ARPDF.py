@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import MDAnalysis as mda
@@ -123,6 +123,7 @@ class ARPDFOptimizer:
             s=0.1, 
             beta=0.1, 
             epochs=1000,
+            loss_name="circular",
             device="cpu",
         ):
         self.X = toTensor(X, device=device).float().contiguous()
@@ -139,6 +140,7 @@ class ARPDFOptimizer:
         self.beta = beta
         self.epochs = epochs
         self.device = device
+        self._loss_func = self._get_loss_func(loss_name)
         self._prepare_weights(weight_cutoff=weight_cutoff)
 
     def set_system(
@@ -194,8 +196,17 @@ class ARPDFOptimizer:
     def _get_delta_pos(self):
         return self._params
 
-    def _loss_func(self, ARPDF_pred):
-        # return -cosine_similarity(ARPDF_pred, self.ARPDF_exp, self.W)
+    def _get_loss_func(self, loss_name: str) -> Callable[[torch.Tensor], torch.Tensor]:
+        loss_func_map = {
+            "cosine": self._loss_cosine,
+            "circular": self._loss_circular
+        }
+        return loss_func_map[loss_name.strip().lower()]
+
+    def _loss_cosine(self, ARPDF_pred):
+        return -cosine_similarity(ARPDF_pred, self.ARPDF_exp, self.W)
+
+    def _loss_circular(self, ARPDF_pred):
         return -torch.vdot(self.r_weight, weighted_similarity(self.circular_weights, ARPDF_pred, self.ARPDF_exp))
 
     def _normalization(self, delta_pos):
@@ -222,12 +233,13 @@ class ARPDFOptimizer:
             loss.backward()
             self.optimizer.step()
 
-            with torch.no_grad():
-                new_delta = self._get_delta_pos()
-                center_pos2_tmp = self.center_pos2_init + new_delta
-                ARPDF_tmp = self.model(center_pos2_tmp) - self.image1
-                loss_tmp = self._loss_func(ARPDF_tmp)
-                self.noise_scheduler.step(loss_tmp)
+            if self.s > 0:
+                with torch.no_grad():
+                    new_delta = self._get_delta_pos()
+                    center_pos2_tmp = self.center_pos2_init + new_delta
+                    ARPDF_tmp = self.model(center_pos2_tmp) - self.image1
+                    loss_tmp = self._loss_func(ARPDF_tmp)
+                    self.noise_scheduler.step(loss_tmp)
 
             self.lr_scheduler.step()
 

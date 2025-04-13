@@ -1,6 +1,6 @@
 from collections import Counter
 from typing import Callable, Dict, List, Optional, Tuple
-# import cupy as cp
+import cupy as cp
 from matplotlib import pyplot as plt
 import numpy as np
 import MDAnalysis as mda
@@ -9,6 +9,7 @@ from scipy.ndimage import gaussian_filter as gaussian_filter_np
 from utils import box_shift, generate_grids, calc_AFF, show_images
 from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, cosine_similarity, generate_field
 from types import ModuleType
+import abel
 
 def compute_all_atom_pairs(
         universe: mda.Universe, 
@@ -189,7 +190,21 @@ def forward_transform(
 
     # Inverse Abel transform to get ARPDF
     # Inverse_Abel_total = abel.Transform(cp.asnumpy(total_ifft), method='basex', direction='inverse', transform_options={"verbose": False}).transform
-    Inverse_Abel_total = abel_inversion(total_ifft) / h
+    #Inverse_Abel_total = abel_inversion(total_ifft) / h
+
+
+    if xp.__name__ == 'cupy':
+        input_array = xp.asnumpy(total_ifft)
+    else:
+        input_array = total_ifft
+
+    Inverse_Abel_total, _ = abel.rbasex.rbasex_transform(input_array, direction='inverse', order=2)
+
+    if xp.__name__ == 'cupy':
+        Inverse_Abel_total = xp.asarray(Inverse_Abel_total)
+
+    # total_ifft_cpu = cp.asnumpy(total_ifft)
+    # Inverse_Abel_total, _ = abel.rbasex.rbasex_transform(total_ifft_cpu, direction = 'inverse', order = 2)
 
     # Smoothing & r-weighting
     if xp.__name__ == "cupy":
@@ -198,6 +213,8 @@ def forward_transform(
     else:
         _gaussian_filter = gaussian_filter_np
     sigma0 = 0.4
+
+    #ARPDF = Inverse_Abel_total
     ARPDF = _gaussian_filter(Inverse_Abel_total, sigma=sigma0/h, mode="constant") * (X**2 + Y**2)
 
     return ARPDF

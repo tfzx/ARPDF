@@ -212,7 +212,7 @@ def forward_transform(
         _gaussian_filter = gaussian_filter_cp
     else:
         _gaussian_filter = gaussian_filter_np
-    sigma0 = 0.1
+    sigma0 = 0.2
 
     #ARPDF = Inverse_Abel_total
     ARPDF = _gaussian_filter(Inverse_Abel_total, sigma=[sigma0/hx, sigma0/hy], mode="constant") * (X**2 + Y**2)

@@ -94,6 +94,40 @@ def get_circular_weight(R_grids, r0, sigma):
     _i0e = special.i0e if xp.__name__ == "numpy" else lambda x: to_cupy(special.i0e(to_numpy(x)))
     return xp.exp(-(_R-_r0)**2/(2*sigma**2)) * _i0e(_r0*_R/sigma)
 
+def oneD_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, axis: int = 0, weight: Optional[ArrayType] = None) -> float:
+    """
+    Compute cosine similarity along a central 1D axis of two ARPDFs.
+    
+    Args:
+        ARPDF1: First ARPDF 2D array.
+        ARPDF2: Second ARPDF 2D array.
+        axis: Which axis to slice along (0 for y-axis/mid-column, 1 for x-axis/mid-row).
+        weight: Optional weight for each pixel in the 1D line.
+        
+    Returns:
+        Cosine similarity between the selected 1D lines of ARPDF1 and ARPDF2.
+    """
+    xp = get_array_module(ARPDF1)
+    if axis == 0:
+        center_idx = ARPDF1.shape[1] // 2
+        line1 = ARPDF1[:, center_idx]
+        line2 = ARPDF2[:, center_idx]
+    else:
+        center_idx = ARPDF1.shape[0] // 2
+        line1 = ARPDF1[center_idx, :]
+        line2 = ARPDF2[center_idx, :]
+
+    if weight is None:
+        weight = xp.ones_like(line1)
+
+    dot = xp.sum(weight * line1 * line2)
+    norm1 = xp.sqrt(xp.sum(weight * line1 * line1)) + 1e-8
+    norm2 = xp.sqrt(xp.sum(weight * line2 * line2)) + 1e-8
+    similarity = dot / (norm1 * norm2)
+
+    return similarity
+
+
 
 _generate_field_C = r'''
 extern "C" __global__

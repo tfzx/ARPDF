@@ -46,14 +46,9 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
             # 计算 C->N 方向
             polar_axis = compute_axis_direction(target_c, target_n, box=box)
 
-            # 调整 CCl₃ 结构
-            modified_atoms = []
-            adjust_ccl3_structure(
-                target_c, target_cl, other_cls, 
-                stretch_distance=distance, 
-                modified_atoms=modified_atoms, 
-                box=box
-            )
+            # 调整 CH3CN 角度
+
+            # 调整 C-N 长度
 
             results.append((polar_axis, u2, modified_atoms))
 

@@ -1,6 +1,5 @@
 from collections import Counter
 from typing import Callable, Dict, List, Optional, Tuple
-import cupy as cp
 from matplotlib import pyplot as plt
 import numpy as np
 import MDAnalysis as mda
@@ -157,12 +156,13 @@ def forward_transform(
         ARPDF : 2D numpy array of Angularly Resolved Pair Distribution Function
     """
     xp = get_array_module(X)
-    N = X.shape[0]
-    h = X[1, 1] - X[0, 0]  # grid spacing
+    Nx, Ny = X.shape
+    hx = X[1, 1] - X[0, 0]  # grid spacing
+    hy = Y[1, 1] - Y[0, 0]
 
     # Fourier grid
-    kx = xp.fft.fftfreq(N, d=h)
-    ky = xp.fft.fftfreq(N, d=h)
+    kx = xp.fft.fftfreq(Nx, d=hx)
+    ky = xp.fft.fftfreq(Ny, d=hy)
     kX, kY = xp.meshgrid(kx, ky)
     S = xp.sqrt(kX**2 + kY**2)
 
@@ -212,10 +212,10 @@ def forward_transform(
         _gaussian_filter = gaussian_filter_cp
     else:
         _gaussian_filter = gaussian_filter_np
-    sigma0 = 0.4
+    sigma0 = 0.1
 
     #ARPDF = Inverse_Abel_total
-    ARPDF = _gaussian_filter(Inverse_Abel_total, sigma=sigma0/h, mode="constant") * (X**2 + Y**2)
+    ARPDF = _gaussian_filter(Inverse_Abel_total, sigma=[sigma0/hx, sigma0/hy], mode="constant") * (X**2 + Y**2)
 
     return ARPDF
 

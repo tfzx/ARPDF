@@ -12,26 +12,6 @@ def get_array_module(x):
         raise ValueError(f"Unsupported array type: {module_name}")
     return sys.modules[module_name]
 
-def _to_numpy(*args) -> list:
-    out = []
-    if "cupy" not in sys.modules:
-        return args
-    import cupy as cp
-    for arg in args:
-        if isinstance(arg, cp.ndarray):
-            out.append(cp.asnumpy(arg))
-        elif isinstance(arg, np.ndarray):
-            out.append(arg)
-        elif isinstance(arg, list):
-            out.append(_to_numpy(*arg))
-        elif isinstance(arg, tuple):
-            out.append(tuple(_to_numpy(*arg)))
-        elif isinstance(arg, dict):
-            out.append({k: _to_numpy(v)[0] for k, v in arg.items()})
-        else:
-            out.append(arg)
-    return out
-
 def to_cupy(*args):
     import cupy as cp
     def _to_cupy(x):
@@ -52,7 +32,7 @@ def to_cupy(*args):
 
 def to_numpy(*args):
     if "cupy" not in sys.modules:
-        return args
+        return args[0] if len(args) == 1 else args
     import cupy as cp
     def _to_numpy(x):
         if isinstance(x, np.ndarray):
@@ -231,8 +211,9 @@ def generate_field_numpy(
         The sum of the fields over all (r, \\theta).
     """
     final_field = np.zeros_like(Y)
-    r_batches = np.split(r_vals, batch_size, axis=0)
-    theta_batches = np.split(theta_vals, batch_size, axis=0)
+    num_atoms = r_vals.shape[0]
+    r_batches = np.split(r_vals, range(batch_size, num_atoms, batch_size), axis=0)
+    theta_batches = np.split(theta_vals, range(batch_size, num_atoms, batch_size), axis=0)
     
     R_view = np.sqrt(X**2 + Y**2).reshape(1, -1)
     Y_view = Y.reshape(1, -1)

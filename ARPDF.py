@@ -190,22 +190,7 @@ def forward_transform(
     total_ifft = xp.fft.ifft2(total_fft).real
 
     # Inverse Abel transform to get ARPDF
-    # Inverse_Abel_total = abel.Transform(cp.asnumpy(total_ifft), method='basex', direction='inverse', transform_options={"verbose": False}).transform
-    #Inverse_Abel_total = abel_inversion(total_ifft) / h
-
-
-    if xp.__name__ == 'cupy':
-        input_array = xp.asnumpy(total_ifft)
-    else:
-        input_array = total_ifft
-
-    Inverse_Abel_total, _ = abel.rbasex.rbasex_transform(input_array, direction='inverse', order=2)
-
-    if xp.__name__ == 'cupy':
-        Inverse_Abel_total = xp.asarray(Inverse_Abel_total)
-
-    # total_ifft_cpu = cp.asnumpy(total_ifft)
-    # Inverse_Abel_total, _ = abel.rbasex.rbasex_transform(total_ifft_cpu, direction = 'inverse', order = 2)
+    Inverse_Abel_total = abel_inversion(total_ifft) / hx
 
     # Smoothing & r-weighting
     if xp.__name__ == "cupy":
@@ -214,8 +199,6 @@ def forward_transform(
     else:
         _gaussian_filter = gaussian_filter_np
     # sigma0 = 0.2
-
-    #ARPDF = Inverse_Abel_total
     ARPDF = _gaussian_filter(Inverse_Abel_total, sigma=[sigma0/hx, sigma0/hy], mode="constant") * (X**2 + Y**2)
 
     return ARPDF

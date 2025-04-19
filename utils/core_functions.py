@@ -1,7 +1,7 @@
 import sys
 import numpy as np
 import scipy.special as special
-from typing import TypeVar, Optional
+from typing import TypeVar, Optional, Tuple
 import abel
 
 ArrayType = TypeVar("ArrayType", np.ndarray, "cupy.ndarray") # type: ignore
@@ -125,6 +125,60 @@ def oneD_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, axis: int = 0, weight:
     norm2 = xp.sqrt(xp.sum(weight * line2 * line2)) + 1e-8
     similarity = dot / (norm1 * norm2)
 
+    return similarity
+
+def angular_average_similarity(
+    ARPDF1: ArrayType,
+    ARPDF2: ArrayType,
+    angle_range=(np.pi/4, 3*np.pi/4),
+    weight: Optional[ArrayType] = None,
+    bin_width: float = 0.1
+) -> float:
+    xp = get_array_module(ARPDF1)
+    assert ARPDF1.shape == ARPDF2.shape, "ARPDF1 and ARPDF2 must have same shape"
+    H, W = ARPDF1.shape
+    cx, cy = W // 2, H // 2
+
+    # Coordinate grid
+    x = xp.arange(W) - cx
+    y = xp.arange(H) - cy
+    X, Y = xp.meshgrid(x, y)
+    R = xp.sqrt(X**2 + Y**2)
+    Theta = xp.arctan2(Y, X)
+
+    # Angular mask
+    theta_min, theta_max = angle_range
+    mask = (Theta >= theta_min) & (Theta <= theta_max)
+
+    # Radial bin index per pixel
+    R_flat = R[mask]
+    ARPDF1_flat = ARPDF1[mask]
+    ARPDF2_flat = ARPDF2[mask]
+    bin_indices = xp.floor(R_flat / bin_width).astype(int)
+
+    if weight is not None:
+        weight_flat = weight[mask]
+        w1 = weight_flat * ARPDF1_flat
+        w2 = weight_flat * ARPDF2_flat
+        sum_w = xp.bincount(bin_indices, weights=weight_flat)
+        sum_w1 = xp.bincount(bin_indices, weights=w1)
+        sum_w2 = xp.bincount(bin_indices, weights=w2)
+        profile1 = sum_w1 / (sum_w + 1e-8)
+        profile2 = sum_w2 / (sum_w + 1e-8)
+        final_weight = sum_w
+    else:
+        profile1 = xp.bincount(bin_indices, weights=ARPDF1_flat)
+        profile2 = xp.bincount(bin_indices, weights=ARPDF2_flat)
+        counts = xp.bincount(bin_indices)
+        profile1 /= (counts + 1e-8)
+        profile2 /= (counts + 1e-8)
+        final_weight = counts
+
+    # Cosine similarity
+    dot = xp.sum(final_weight * profile1 * profile2)
+    norm1 = xp.sqrt(xp.sum(final_weight * profile1**2)) + 1e-8
+    norm2 = xp.sqrt(xp.sum(final_weight * profile2**2)) + 1e-8
+    similarity = dot / (norm1 * norm2)
     return similarity
 
 

@@ -142,6 +142,7 @@ def get_diff_fields(
 def forward_transform(
         diff_fields: Dict[Tuple[str, str], ArrayType], 
         X: ArrayType, Y: ArrayType, 
+        sigma0: float,
         type_counts: Dict[str, int], 
         filter_fourier: Optional[Callable[[ArrayType, ArrayType, ModuleType], ArrayType]] = None
     ) -> ArrayType:
@@ -212,7 +213,7 @@ def forward_transform(
         _gaussian_filter = gaussian_filter_cp
     else:
         _gaussian_filter = gaussian_filter_np
-    sigma0 = 0.2
+    # sigma0 = 0.2
 
     #ARPDF = Inverse_Abel_total
     ARPDF = _gaussian_filter(Inverse_Abel_total, sigma=[sigma0/hx, sigma0/hy], mode="constant") * (X**2 + Y**2)
@@ -222,8 +223,9 @@ def forward_transform(
 def compute_ARPDF(
     u1: mda.Universe,
     u2: mda.Universe,
-    cutoff: float = 10.0,
     N: int = 512,
+    cutoff: float = 10.0,
+    sigma0=0.4,
     grids_XY: Optional[Tuple[ArrayType, ArrayType]] = None,
     modified_atoms: Optional[List[int]] = None,
     polar_axis = (0, 0, 1),
@@ -301,7 +303,7 @@ def compute_ARPDF(
 
     # ARPDF computation
     _print_func("Computing ARPDF...")
-    ARPDF = forward_transform(diff_fields, X, Y, Counter(u1.atoms.types), filter_fourier)
+    ARPDF = forward_transform(diff_fields, X, Y, sigma0, Counter(u1.atoms.types), filter_fourier)
     normalize_factor = num_sel1 / len(u1.atoms)
     ARPDF = ARPDF / normalize_factor * 100
 

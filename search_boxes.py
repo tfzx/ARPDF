@@ -10,7 +10,7 @@ from utils import preprocess_ARPDF, box_shift
 from utils.core_functions import cosine_similarity, to_cupy, get_circular_weight, weighted_similarity, oneD_similarity 
 from utils import compute_axis_direction, adjust_ccl3_structure, adjust_ccl, clean_gro_box
 
-def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=10.0, metric='cosine', weight_cutoff=4.0):
+def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=10.0, sigma0=0.2, metric='cosine', weight_cutoff=4.0):
 
     def sample_center_molecules():
         """ Return a list of atoms indices of molecules """
@@ -109,7 +109,7 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
         best_ARPDF = None
         best_modified_atoms = None
         for polar_axis, u2, modified_atoms in generate_u2(molecule,stretch_distances=stretch_values):
-            ARPDF = compute_ARPDF(universe, u2, cutoff, 256, (X, Y), modified_atoms=modified_atoms, 
+            ARPDF = compute_ARPDF(universe, u2, 256, cutoff, sigma0, (X, Y), modified_atoms=modified_atoms, 
                                     polar_axis=polar_axis, periodic=True, filter_fourier=filter_fourier, verbose=False)
             # similarity = cp.vdot(r_weight, Similarity(circular_weights, ARPDF, ARPDF_exp)).get()
             similarity = metric_func(ARPDF, ARPDF_exp).get()
@@ -122,7 +122,7 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
         results[molecule] = (best_polar_axis, best_u2, best_ARPDF, best_similarity, best_modified_atoms)
     return results
 
-def workflow_demo(X, Y, ARPDF_ref, filter_fourier=None, exp_name: str="exp", metric: str="1D", weight_cutoff=5.0):
+def workflow_demo(X, Y, ARPDF_ref, filter_fourier=None, sigma0=0.2, exp_name: str="exp", metric: str="1D", weight_cutoff=5.0):
     def get_box_iter():
         """Run and sample boxes from the MD simulation."""
         clean_gro_box('data/CCl4/CCl4.gro','data/CCl4/CCl4_clean.gro')
@@ -182,7 +182,9 @@ def workflow_demo(X, Y, ARPDF_ref, filter_fourier=None, exp_name: str="exp", met
     # X, Y, ARPDF_ref = load_ARPDF_exp("data/CCl4/ARPDF_exp.npy")
     for box in get_box_iter():
         universe = get_universe(box)
-        results = search_structure(universe, (X, Y), ARPDF_ref, filter_fourier=filter_fourier, metric=metric, weight_cutoff=weight_cutoff)
+        results = search_structure(
+            universe, (X, Y), ARPDF_ref, filter_fourier=filter_fourier, sigma0=sigma0, metric=metric, weight_cutoff=weight_cutoff
+        )
         with open(f"{out_dir}/results.pkl", "wb") as f:
             pickle.dump(results, f)
         dump_results(results)

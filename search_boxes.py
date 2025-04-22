@@ -7,10 +7,10 @@ import MDAnalysis as mda
 import json
 from ARPDF import compute_ARPDF, compare_ARPDF
 from utils import preprocess_ARPDF, box_shift
-from utils.core_functions import cosine_similarity, to_cupy, get_circular_weight, weighted_similarity, oneD_similarity 
+from utils.core_functions import cosine_similarity, to_cupy, get_circular_weight, weighted_similarity, oneD_similarity, angular_average_similarity 
 from utils import compute_axis_direction, adjust_ccl3_structure, adjust_ccl, clean_gro_box
 
-def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=10.0, sigma0=0.2, metric='cosine', weight_cutoff=4.0):
+def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=10.0, sigma0=0.2, metric='cosine', weight_cutoff=4.0, neg=False):
 
     def sample_center_molecules():
         """ Return a list of atoms indices of molecules """
@@ -81,25 +81,30 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
     X, Y, ARPDF_exp = to_cupy(*grids_XY, ARPDF_exp)
     metric_func = {
         'cosine': lambda x, y: cosine_similarity(x, y, cos_weight), 
-        'circle': lambda x, y: cp.vdot(r_weight, weighted_similarity(circular_weights), x, y),
-        '1D': lambda x, y: oneD_similarity(x, y, axis=0, weight=axis_weight)
+        'circle': lambda x, y: cp.vdot(r_weight, weighted_similarity(circular_weights, x, y)),
+        '1D': lambda x, y: oneD_similarity(x, y, axis=0, weight=axis_weight),
+        '1D_average': lambda x, y: angular_average_similarity(x, y, weight=average_weight)
     }[metric]
 
     molecule_list = sample_center_molecules()
     R = cp.sqrt(X**2 + Y**2)
-    cos_weight = cp.exp(-cp.maximum(R - weight_cutoff, 0)**2 / (2 * (1 / 3)**2))
+    cos_weight = cp.exp(-cp.maximum(R - weight_cutoff, 0)**2 / (2 * (0.5)**2))/(1 + cp.exp(-10 * (R - 1)))
     r0_arr = cp.linspace(0, 8, 40)
     dr0 = r0_arr[1] - r0_arr[0]
     circular_weights = get_circular_weight(R, r0_arr, sigma=dr0/6.0)
-    r_weight = cp.exp(-cp.maximum(r0_arr - weight_cutoff, 0)**2 / (2 * (1 / 3)**2))
+    r_weight = cp.exp(-cp.maximum(r0_arr - weight_cutoff, 0)**2 / (2 * (0.5)**2))/ (1 + cp.exp(-10 * (r0_arr - 1)))
     r_weight /= r_weight.sum()
     
-    axis_weight = cp.exp(-cp.maximum(X - weight_cutoff, 0)**2 / (2 * (1 / 3)**2))
+    axis_weight = cp.exp(-cp.maximum(R - weight_cutoff, 0)**2 / (2 * (0.5)**2))/(1 + cp.exp(-10 * (R - 1)))
     axis_weight /= axis_weight.sum()
+
+    average_weight = cp.exp(-cp.maximum(R - weight_cutoff, 0)**2 / (2 * (0.5)**2))/ (1 + cp.exp(-10 * (R - 1)))
+    average_weight /= average_weight.sum()
 
     results = {}
 
-    stretch_values = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4]
+    stretch_values = [round(1.0 + 0.1 * i, 1) for i in range(15)]
+
 
     for molecule in molecule_list:
         # TODO: parallelize this loop
@@ -110,7 +115,7 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
         best_modified_atoms = None
         for polar_axis, u2, modified_atoms in generate_u2(molecule,stretch_distances=stretch_values):
             ARPDF = compute_ARPDF(universe, u2, 256, cutoff, sigma0, (X, Y), modified_atoms=modified_atoms, 
-                                    polar_axis=polar_axis, periodic=True, filter_fourier=filter_fourier, verbose=False)
+                                    polar_axis=polar_axis, periodic=True, filter_fourier=filter_fourier, verbose=False, neg=neg)
             # similarity = cp.vdot(r_weight, Similarity(circular_weights, ARPDF, ARPDF_exp)).get()
             similarity = metric_func(ARPDF, ARPDF_exp).get()
             if similarity > best_similarity:
@@ -122,7 +127,7 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
         results[molecule] = (best_polar_axis, best_u2, best_ARPDF, best_similarity, best_modified_atoms)
     return results
 
-def workflow_demo(X, Y, ARPDF_ref, filter_fourier=None, sigma0=0.2, exp_name: str="exp", metric: str="1D", weight_cutoff=5.0):
+def workflow_demo(X, Y, ARPDF_ref, filter_fourier=None, sigma0=0.2, exp_name: str="exp", metric: str="1D_average", weight_cutoff=5.0, neg=False):
     def get_box_iter():
         """Run and sample boxes from the MD simulation."""
         clean_gro_box('data/CCl4/CCl4.gro','data/CCl4/CCl4_clean.gro')
@@ -183,8 +188,7 @@ def workflow_demo(X, Y, ARPDF_ref, filter_fourier=None, sigma0=0.2, exp_name: st
     for box in get_box_iter():
         universe = get_universe(box)
         results = search_structure(
-            universe, (X, Y), ARPDF_ref, filter_fourier=filter_fourier, sigma0=sigma0, metric=metric, weight_cutoff=weight_cutoff
-        )
+            universe, (X, Y), ARPDF_ref, filter_fourier=filter_fourier, sigma0=sigma0, metric=metric, weight_cutoff=weight_cutoff, neg=neg)
         with open(f"{out_dir}/results.pkl", "wb") as f:
             pickle.dump(results, f)
         dump_results(results)

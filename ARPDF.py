@@ -229,7 +229,8 @@ def compute_ARPDF(
     polar_axis = (0, 0, 1),
     periodic: bool = False,
     filter_fourier: Optional[Callable[[ArrayType, ArrayType, ModuleType], ArrayType]] = None,
-    verbose: bool = False
+    verbose: bool = False,
+    neg: bool =False
 ) -> ArrayType:
     """
     Main pipeline: u1, u2 -> generate diff fields -> FFT -> AFF+filter -> Inverse FFT -> Inverse Abel -> ARPDF
@@ -304,6 +305,9 @@ def compute_ARPDF(
     ARPDF = forward_transform(diff_fields, X, Y, Counter(u1.atoms.types), filter_fourier)
     normalize_factor = num_sel1 / len(u1.atoms)
     ARPDF = ARPDF / normalize_factor * 100
+
+    if neg:
+        ARPDF[ARPDF>0]=0
 
     if verbose:
         xmin, xmax = X.min(), X.max()

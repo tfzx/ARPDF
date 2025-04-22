@@ -107,7 +107,13 @@ def oneD_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, axis: int = 0, weight:
     Returns:
         Cosine similarity between the selected 1D lines of ARPDF1 and ARPDF2.
     """
+
     xp = get_array_module(ARPDF1)
+
+    if weight is not None:
+        ARPDF1 = ARPDF1 * weight
+        ARPDF2 = ARPDF2 * weight
+
     if axis == 0:
         center_idx = ARPDF1.shape[1] // 2
         line1 = ARPDF1[:, center_idx]
@@ -117,12 +123,9 @@ def oneD_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, axis: int = 0, weight:
         line1 = ARPDF1[center_idx, :]
         line2 = ARPDF2[center_idx, :]
 
-    if weight is None:
-        weight = xp.ones_like(line1)
-
-    dot = xp.sum(weight * line1 * line2)
-    norm1 = xp.sqrt(xp.sum(weight * line1 * line1)) + 1e-8
-    norm2 = xp.sqrt(xp.sum(weight * line2 * line2)) + 1e-8
+    dot = xp.sum(line1 * line2)
+    norm1 = xp.sqrt(xp.sum(line1 * line1)) + 1e-8
+    norm2 = xp.sqrt(xp.sum(line2 * line2)) + 1e-8
     similarity = dot / (norm1 * norm2)
 
     return similarity
@@ -175,9 +178,9 @@ def angular_average_similarity(
         final_weight = counts
 
     # Cosine similarity
-    dot = xp.sum(final_weight * profile1 * profile2)
-    norm1 = xp.sqrt(xp.sum(final_weight * profile1**2)) + 1e-8
-    norm2 = xp.sqrt(xp.sum(final_weight * profile2**2)) + 1e-8
+    dot = xp.sum(profile1 * profile2)
+    norm1 = xp.sqrt(xp.sum(profile1**2)) + 1e-8
+    norm2 = xp.sqrt(xp.sum(profile2**2)) + 1e-8
     similarity = dot / (norm1 * norm2)
     return similarity
 

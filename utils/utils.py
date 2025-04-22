@@ -5,6 +5,7 @@ import numpy as np
 from typing import Any, List, Optional, Tuple, Iterable
 import json
 import MDAnalysis as mda
+from MDAnalysis.analysis import align
 from numpy._typing._array_like import NDArray
 from utils.core_functions import ArrayType, get_array_module
 
@@ -285,6 +286,80 @@ def load_structure_data(data_dir: str):
     modified_atoms: List[int] = structure_info["modified_atoms"]
     polar_axis: List[float] = structure_info["polar_axis"]
     return u1, u2, modified_atoms, polar_axis
+
+def rotation_matrix(v1: np.ndarray, v2: np.ndarray) -> np.ndarray:
+    """
+    Calculate rotation matrix to align vector v1 with v2.
+    
+    Args:
+        v1 (np.ndarray): Source vector
+        v2 (np.ndarray): Target vector
+        
+    Returns:
+        np.ndarray: 3x3 rotation matrix
+    """
+    u = v1 - v2
+    if np.linalg.norm(u) < 1e-8:
+        return np.eye(3)
+    u /= np.linalg.norm(u)
+    return np.eye(3) - 2 * np.outer(u, u)
+
+def calculate_rmsd(
+    mobile: mda.Universe,
+    reference: mda.Universe,
+    selection: List[int],
+    subselection: Optional[List[int]] = None,
+) -> float:
+    """
+    Calculate RMSD between two structures.
+    
+    Args:
+        mobile (mda.Universe): The mobile structure
+        reference (mda.Universe): The reference structure
+        selection (List[int]): Atom indices to calculate RMSD
+        subselection (Optional[List[int]]): Atom indices to use for alignment (if None, use selection)
+        
+    Returns:
+        float: RMSD value
+    """
+    # Get selected atoms
+    mobile_atoms = mobile.atoms[selection]
+    reference_atoms = reference.atoms[selection]
+
+    # handle periodic boundary conditions
+    mobile_atoms.positions = box_shift(mobile_atoms.positions - mobile_atoms[[0]].positions, mobile.dimensions)
+    reference_atoms.positions = box_shift(reference_atoms.positions - reference_atoms[[0]].positions, reference.dimensions)
+    
+    # Get subselection atoms for alignment if provided
+    if subselection is not None:
+        mobile_sub = mobile.atoms[subselection]
+        reference_sub = reference.atoms[subselection]
+    else:
+        mobile_sub = mobile_atoms
+        reference_sub = reference_atoms
+    
+    # Calculate center of mass
+    mobile_com = mobile_sub.center_of_mass()
+    reference_com = reference_sub.center_of_mass()
+    
+    # Center coordinates
+    mobile_pos = mobile_sub.positions - mobile_com
+    reference_pos = reference_sub.positions - reference_com
+    
+    # Calculate rotation matrix using MDAnalysis
+    R, rmsd_rot = align.rotation_matrix(mobile_pos, reference_pos)
+    if subselection is None:
+        return rmsd_rot
+    
+    # Apply rotation to mobile structure
+    mobile_pos = mobile_atoms.positions - mobile_com
+    mobile_pos_rotated = mobile_pos @ R
+    
+    # Calculate RMSD
+    diff = mobile_pos_rotated - (reference_atoms.positions - reference_com)
+    rmsd = np.sqrt(np.mean(np.sum(diff**2, axis=1)))
+    
+    return rmsd
 
 if __name__ == "__main__":
     import cupy as cp

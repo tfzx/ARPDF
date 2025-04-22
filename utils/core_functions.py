@@ -53,7 +53,7 @@ def to_numpy(*args):
 
 abel_inv_mat_cache = {}
 
-def abel_inversion(image: ArrayType) -> ArrayType:
+def abel_inversion_basex(image: ArrayType) -> ArrayType:
     xp = get_array_module(image)
     global abel_inv_mat_cache
     def get_matrix(n, xp_name: str):
@@ -65,6 +65,15 @@ def abel_inversion(image: ArrayType) -> ArrayType:
         abel_inv_mat_cache[key] = trans_mat
         return trans_mat
     return image @ get_matrix(image.shape[1], xp.__name__)
+
+def abel_inversion_rbasex(image: ArrayType) -> ArrayType:
+    xp = get_array_module(image)
+    inverse_Abel, _ = abel.rbasex.rbasex_transform(to_numpy(image), direction='inverse', order=2)
+    return xp.array(inverse_Abel, dtype=xp.float32)
+
+def abel_inversion(image: ArrayType) -> ArrayType:
+    return abel_inversion_rbasex(image)
+
 
 def cosine_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, weight: Optional[ArrayType] = None) -> float:
     """

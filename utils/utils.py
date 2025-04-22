@@ -5,6 +5,7 @@ import numpy as np
 from typing import Any, List, Optional, Tuple, Iterable
 import json
 import MDAnalysis as mda
+from numpy._typing._array_like import NDArray
 from utils.core_functions import ArrayType, get_array_module
 
 
@@ -37,6 +38,20 @@ def box_shift(dx: ArrayType, box: Optional[List[float]] = None) -> ArrayType:
         return cell
     cell = box_to_cell(box)
     return dx - xp.round(dx @ xp.linalg.inv(cell)) @ cell
+
+def select_mols(universe: mda.Universe, center_atoms: List[int], nbr_distance: float | None = None, periodic = True):
+    """
+    Select molecules within the specified distance from the center atoms.
+    """
+    if periodic:
+        box = universe.dimensions
+    else:
+        box = None
+    center_group = universe.atoms[center_atoms]
+    if nbr_distance is not None:
+        center_group = center_group + universe.select_atoms(f"around {nbr_distance} group center", center=center_group, periodic=periodic)
+    mask = np.isin(universe.atoms.resids, np.unique(center_group.resids))
+    return np.nonzero(mask)[0]
 
 def get_xy_range(xy_range) -> list:
     if isinstance(xy_range, (float, int)):

@@ -18,7 +18,7 @@ from utils.core_functions_torch import generate_gaussian_kernel, gaussian_filter
 
 
 class ARPDFModel:
-    def __init__(self, X, Y, type_counts: Dict[str, int], filter_fourier = None, cutoff = 10.0, field_batch_size=256):
+    def __init__(self, X, Y, type_counts: Dict[str, int], filter_fourier = None, cutoff = 10.0, sigma0 = 0.4, field_batch_size=256):
         super(ARPDFModel, self).__init__()
         self.X = toTensor(X).float().contiguous()
         self.Y = toTensor(Y).float().contiguous()
@@ -27,6 +27,7 @@ class ARPDFModel:
         self.hy = (self.Y[1, 1] - self.Y[0, 0]).item()
         self.h = max(self.hx, self.hy)
         self.cutoff = cutoff
+        self.sigma0 = sigma0
         self.field_batch_size = field_batch_size
         self.prepare_transform(type_counts, filter_fourier)
 
@@ -67,8 +68,7 @@ class ARPDFModel:
         self.abel_trans_mat = get_abel_trans_mat(N)
 
         # Gaussian kernel
-        sigma0 = 0.4
-        self.gaussian_kernel = generate_gaussian_kernel((sigma0/self.hx, sigma0/self.hy))
+        self.gaussian_kernel = generate_gaussian_kernel((self.sigma0/self.hx, self.sigma0/self.hy))
 
     def to(self, *args, **kwargs):
         self.__dict__.update(toTensor(self.__dict__, *args, **kwargs))
@@ -116,6 +116,7 @@ class ARPDFOptimizer:
             type_counts: Dict[str, int],
             filter_fourier = None,
             cutoff=10.0,
+            sigma0=0.4,
             weight_cutoff=6.0,
             lr=0.01, 
             gamma=0.995,
@@ -131,14 +132,16 @@ class ARPDFOptimizer:
         self.ARPDF_exp = toTensor(ARPDF_exp, device=device).float().contiguous()
         self.h = X[1, 1] - X[0, 0]
         self.type_counts = type_counts
-        self.model = ARPDFModel(X, Y, type_counts, filter_fourier, cutoff, field_batch_size=128).to(device=device)
+        self.model = ARPDFModel(X, Y, type_counts, filter_fourier, cutoff, sigma0, field_batch_size=128).to(device=device)
         self.cutoff = cutoff
+        self.sigma0 = sigma0
         self.f_lb = f_lb
         self.lr = lr
         self.gamma = gamma
         self.s = s
         self.beta = beta
         self.epochs = epochs
+        self.loss_name = loss_name
         self.device = device
         self._loss_func = self._get_loss_func(loss_name)
         self._prepare_weights(weight_cutoff=weight_cutoff)
@@ -281,12 +284,16 @@ class ARPDFOptimizer:
                 "type_counts": self.type_counts,
                 "hyperparameters": {
                     "cutoff": self.cutoff,
+                    "sigma0": self.sigma0,
+                    "weight_cutoff": self.cutoff,
                     "lr": self.lr,
                     "gamma": self.gamma,
                     "f_lb": self.f_lb,
                     "s": self.s,
                     "beta": self.beta,
                     "epochs": self.epochs,
+                    "loss_name": self.loss_name,
+                    "device": self.device
                 },
             }
         })

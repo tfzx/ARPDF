@@ -145,7 +145,7 @@ class StructureSearcher:
             for polar_axis, u2, modified_atoms in self.structure_modifier.generate_modified_structures(molecule):
                 ARPDF = compute_ARPDF(
                     self.universe, u2, 256, self.cutoff, self.sigma0, self.grids_XY,
-                modified_atoms=modified_atoms, 
+                    modified_atoms=modified_atoms, 
                     polar_axis=polar_axis,
                     periodic=True,
                     filter_fourier=self.filter_fourier,

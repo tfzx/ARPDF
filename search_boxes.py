@@ -10,6 +10,24 @@ from utils.core_functions import cosine_similarity, to_cupy, get_circular_weight
 from utils import clean_gro_box
 from ccl4_modifier import StructureModifier, select_center_molecules
 from typing import Callable, List, Tuple, Optional, Any
+from dataclasses import dataclass
+
+@dataclass
+class SearchResult:
+    """Data class to store search results for a single molecule
+    
+    Attributes:
+        polar_axis (ndarray): Direction vector of the modified bond
+        modified_universe (mda.Universe): Modified structure
+        ARPDF (ndarray): Calculated ARPDF for the modified structure
+        similarity (float): Similarity score between ARPDF and experimental data
+        modified_atoms (List[int]): Indices of modified atoms
+    """
+    polar_axis: np.ndarray
+    modified_universe: mda.Universe
+    ARPDF: np.ndarray
+    similarity: float
+    modified_atoms: List[int]
 
 class SimilarityCalculator:
     """Handle similarity calculations between ARPDFs"""
@@ -127,7 +145,7 @@ class StructureSearcher:
             for polar_axis, u2, modified_atoms in self.structure_modifier.generate_modified_structures(molecule):
                 ARPDF = compute_ARPDF(
                     self.universe, u2, 256, self.cutoff, self.sigma0, self.grids_XY,
-                    modified_atoms=modified_atoms,
+                modified_atoms=modified_atoms, 
                     polar_axis=polar_axis,
                     periodic=True,
                     filter_fourier=self.filter_fourier,
@@ -135,11 +153,17 @@ class StructureSearcher:
                     neg=self.neg
                 )
                 
-                similarity = self.similarity_calc.calc_similarity(ARPDF, self.ARPDF_exp)
+                similarity = self.similarity_calc.calc_similarity(ARPDF, self.ARPDF_exp).get()
                 
                 if similarity > best_similarity:
                     best_similarity = similarity
-                    best_result = (polar_axis, u2, ARPDF.get(), similarity, modified_atoms)
+                    best_result = SearchResult(
+                        polar_axis=[float(x) for x in polar_axis],
+                        modified_universe=u2,
+                        ARPDF=ARPDF.get(),
+                        similarity=similarity,
+                        modified_atoms=[int(x) for x in modified_atoms]
+                    )
             
             self.results[molecule] = best_result
         
@@ -153,8 +177,8 @@ class StructureSearcher:
             Y (ndarray): Y grid coordinates
             ARPDF_ref (ndarray): Reference ARPDF data
         """
-        best_mol = max(self.results, key=lambda x: self.results[x][3])
-        worst_mol = min(self.results, key=lambda x: self.results[x][3])
+        best_mol = max(self.results, key=lambda x: self.results[x].similarity)
+        worst_mol = min(self.results, key=lambda x: self.results[x].similarity)
         
         self._save_best_results(self.results[best_mol], X, Y, ARPDF_ref)
         self._save_worst_results(self.results[worst_mol], X, Y, ARPDF_ref)
@@ -163,10 +187,9 @@ class StructureSearcher:
         with open(f"{self.output_dir}/results.pkl", "wb") as f:
             pickle.dump(self.results, f)
     
-    def _save_best_results(self, result, X, Y, ARPDF_ref):
+    def _save_best_results(self, result: SearchResult, X, Y, ARPDF_ref):
         """Save best results"""
-        polar_axis, u2, ARPDF, similarity, modified_atoms = result
-        modified_atoms = [int(x) for x in modified_atoms]
+        modified_atoms = result.modified_atoms
         
         # Save metadata
         with open(f"{self.output_dir}/metadata.json", "w") as f:
@@ -175,45 +198,44 @@ class StructureSearcher:
                 "structure_info": {
                     "u1_name": "CCl4.gro",
                     "u2_name": "CCl4_best_init.gro",
-                    "polar_axis": [float(x) for x in polar_axis],
+                    "polar_axis": result.polar_axis,
                     "modified_atoms": modified_atoms
                 }
             }, f, indent=4)
         
         # Save structures
         self.universe.atoms.write(f"{self.output_dir}/CCl4.gro")
-        u2.atoms.write(f"{self.output_dir}/CCl4_best_init.gro")
+        result.modified_universe.atoms.write(f"{self.output_dir}/CCl4_best_init.gro")
         
         # Save selected atoms
-        center_group = u2.atoms[modified_atoms]
-        selected_group = center_group + u2.select_atoms("around 6 group center", center=center_group)
+        center_group = result.modified_universe.atoms[modified_atoms]
+        selected_group = center_group + result.modified_universe.select_atoms("around 6 group center", center=center_group)
         _center = center_group.positions[0:1]
-        center_group.positions = _center + box_shift(center_group.positions - _center, box=u2.dimensions)
-        selected_group.positions = _center + box_shift(selected_group.positions - _center, box=u2.dimensions)
+        center_group.positions = _center + box_shift(center_group.positions - _center, box=result.modified_universe.dimensions)
+        selected_group.positions = _center + box_shift(selected_group.positions - _center, box=result.modified_universe.dimensions)
         selected_group.write(f"{self.output_dir}/CCl4_selected.gro")
         
         # Save visualization
-        fig = compare_ARPDF(ARPDF, ARPDF_ref, (X, Y), cos_sim=similarity, show_range=8.0)
+        fig = compare_ARPDF(result.ARPDF, ARPDF_ref, (X, Y), cos_sim=result.similarity, show_range=8.0)
         fig.savefig(f"{self.output_dir}/CCl4_best_init.png")
     
-    def _save_worst_results(self, result, X, Y, ARPDF_ref):
+    def _save_worst_results(self, result: SearchResult, X, Y, ARPDF_ref):
         """Save worst results"""
-        polar_axis, u2, ARPDF, similarity, modified_atoms = result
-        modified_atoms = [int(x) for x in modified_atoms]
+        modified_atoms = result.modified_atoms
         
         # Save structures
-        u2.atoms.write(f"{self.output_dir}/CCl4_worst_init.gro")
+        result.modified_universe.atoms.write(f"{self.output_dir}/CCl4_worst_init.gro")
         
         # Save selected atoms
-        center_group = u2.atoms[modified_atoms]
-        selected_group = center_group + u2.select_atoms("around 6 group center", center=center_group)
+        center_group = result.modified_universe.atoms[modified_atoms]
+        selected_group = center_group + result.modified_universe.select_atoms("around 6 group center", center=center_group)
         _center = center_group.positions[0:1]
-        center_group.positions = _center + box_shift(center_group.positions - _center, box=u2.dimensions)
-        selected_group.positions = _center + box_shift(selected_group.positions - _center, box=u2.dimensions)
+        center_group.positions = _center + box_shift(center_group.positions - _center, box=result.modified_universe.dimensions)
+        selected_group.positions = _center + box_shift(selected_group.positions - _center, box=result.modified_universe.dimensions)
         selected_group.write(f"{self.output_dir}/CCl4_worst_selected.gro")
         
         # Save visualization
-        fig = compare_ARPDF(ARPDF, ARPDF_ref, (X, Y), cos_sim=similarity, show_range=8.0)
+        fig = compare_ARPDF(result.ARPDF, ARPDF_ref, (X, Y), cos_sim=result.similarity, show_range=8.0)
         fig.savefig(f"{self.output_dir}/CCl4_worst_init.png")
 
 def workflow_demo(

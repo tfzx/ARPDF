@@ -10,7 +10,7 @@ from utils.utils import (
     calculate_rmsd
 )
 from utils.AFF_map import calc_AFF
-from utils.box_modify import adjust_ccl, adjust_ccl3_structure
+from utils.box_modify import adjust_ccl3_structure, adjust_ccl, compute_axis_direction, clean_gro_box
 from utils.analyze_structure import analyze_ccl4_structure, StructureAnalysisResult, select_ccl4_molecules
 
 __all__ = [
@@ -26,6 +26,8 @@ __all__ = [
     'calc_AFF',
     'adjust_ccl',
     'adjust_ccl3_structure',
+    'compute_axis_direction',
+    'clean_gro_box',
     'analyze_ccl4_structure',
     'StructureAnalysisResult',
     'select_ccl4_molecules'

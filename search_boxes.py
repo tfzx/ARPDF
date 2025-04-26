@@ -48,13 +48,9 @@ class StrucModProtocol(Protocol):
 
 def save_ccl4_result(result: SearchResult, file_name: str, nbr_distance: float = 5.0):
     """Save the result of CCl4 structure"""
-    
-    # Save selected atoms
     ccl4_indices = select_ccl4_molecules(result.modified_universe, result.molecule, cutoff_distance=nbr_distance)
     nbr_indices = select_nbr_mols(result.modified_universe, result.modified_atoms, nbr_distance=nbr_distance)
-    ccl4_group = copy_atom_group(result.modified_universe.atoms[ccl4_indices])
-    nbr_group = copy_atom_group(result.modified_universe.atoms[nbr_indices])
-    rotate_ccl4_molecules(ccl4_group, nbr_group, result.polar_axis)
+    nbr_group = rotate_ccl4_molecules(result.modified_universe, ccl4_indices, nbr_indices, result.polar_axis)
     nbr_group.write(file_name)
 
 
@@ -245,7 +241,7 @@ class StructureSearcher:
                     "grids_range": grids_range,
                     "grids_shape": list(self.X.shape),
                     "molecule_selector": self.molecule_selector.__name__,
-                    "structure_modifier": self.structure_modifier.__module__,
+                    "structure_modifier": self.structure_modifier.__class__.__name__,
                     "filter_fourier": str(self.filter_fourier),
                     "cutoff": self.cutoff,
                     "weight_cutoff": self.weight_cutoff,

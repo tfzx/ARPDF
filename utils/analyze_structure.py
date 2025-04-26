@@ -3,7 +3,7 @@ import MDAnalysis as mda
 import MDAnalysis.analysis.distances as mda_dist
 from typing import Tuple, Dict, Optional, Callable, List
 import os
-from utils import load_structure_data, box_shift, rotation_matrix
+from utils import load_structure_data, box_shift, rotation_matrix, copy_atom_group
 from dataclasses import dataclass
 
 @dataclass
@@ -58,37 +58,47 @@ def select_ccl4_molecules(
     return mol_A_indices + mol_B_indices
 
 def rotate_ccl4_molecules(
-        ccl4_mols: mda.AtomGroup,
-        other_atoms: mda.AtomGroup | None = None,
+        u: mda.Universe,
+        ccl4_indices: List[int],
+        selection: List[int] | None = None,
         polar_axis: np.ndarray | None = None
-    ) -> None:
+    ) -> mda.AtomGroup:
     """
-    Rotate and translate CCl4 molecules to align with the target axis.
-    If `other_atoms` is not None, apply the same rotation to `other_atoms`.
-    Modify the positions of the molecules in place.
+    Rotate and translate CCl4 molecules to align the polar axis to z-axis.
+    This will copy the atoms to a new universe and return the new atom group.
 
     Args:
-        ccl4_mols (mda.AtomGroup): Two CCl4 molecules.
-        other_atoms (mda.AtomGroup): Other atoms to align with.
-        polar_axis (np.ndarray): Polar axis for alignment.
+        u (mda.Universe): MDAnalysis universe containing the structure
+        ccl4_indices (List[int]): Indices of CCl4 molecules
+        selection (List[int]): Indices of selected atoms
+        polar_axis (np.ndarray): Polar axis for alignment
+        
+    Returns:
+        mda.AtomGroup: Selected atoms after alignment
     """
+    ccl4_mols = u.atoms[ccl4_indices]
+    if selection is not None:
+        ag_new = copy_atom_group(u.atoms[selection])
+    else:
+        ag_new = copy_atom_group(ccl4_mols)
     if polar_axis is None:
         polar_axis = ccl4_mols[1].position - ccl4_mols[0].position
         polar_axis /= np.linalg.norm(polar_axis)
     R = rotation_matrix(polar_axis, np.array([0, 0, 1]))
-    ccl4_mols.positions = box_shift(ccl4_mols.positions - ccl4_mols[0].position[None, :], ccl4_mols.dimensions) @ R.T
+    CL_B_pos = ccl4_mols[6].position
+    _center = ccl4_mols[0].position
+    CL_B_pos = box_shift(CL_B_pos - _center, u.dimensions) @ R.T
 
     # Rotate around z-axis to align CL_B to xz plane
-    CL_B_pos = ccl4_mols[6].position
     theta = np.arctan2(CL_B_pos[1], CL_B_pos[0])
     R_z = np.array([
         [np.cos(theta), np.sin(theta), 0],
         [-np.sin(theta), np.cos(theta), 0],
         [0, 0, 1]
     ])
-    ccl4_mols.positions = ccl4_mols.positions @ R_z.T
-    if other_atoms is not None:
-        other_atoms.positions = other_atoms.positions @ R.T @ R_z.T
+    ag_new.positions = box_shift(ag_new.positions - _center, u.dimensions) @ (R_z @ R).T
+    return ag_new
+    
 
 def analyze_ccl4_structure(
         u: mda.Universe,

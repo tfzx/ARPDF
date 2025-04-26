@@ -323,40 +323,38 @@ def calculate_rmsd(
         float: RMSD value
     """
     # Get selected atoms
-    mobile_atoms = mobile.atoms[selection]
-    reference_atoms = reference.atoms[selection]
+    mobile_pos = mobile.atoms[selection].positions
+    reference_pos = reference.atoms[selection].positions
 
     # handle periodic boundary conditions
-    mobile_atoms.positions = box_shift(mobile_atoms.positions - mobile_atoms[[0]].positions, mobile.dimensions)
-    reference_atoms.positions = box_shift(reference_atoms.positions - reference_atoms[[0]].positions, reference.dimensions)
+    mobile_pos = box_shift(mobile_pos - mobile_pos[[0]], mobile.dimensions)
+    reference_pos = box_shift(reference_pos - reference_pos[[0]], reference.dimensions)
     
     # Get subselection atoms for alignment if provided
     if subselection is not None:
-        mobile_sub = mobile.atoms[subselection]
-        reference_sub = reference.atoms[subselection]
+        mobile_sub_pos = mobile.atoms[subselection].positions
+        reference_sub_pos = reference.atoms[subselection].positions
     else:
-        mobile_sub = mobile_atoms
-        reference_sub = reference_atoms
+        mobile_sub_pos = mobile_pos
+        reference_sub_pos = reference_pos
     
     # Calculate center of mass
-    mobile_com = mobile_sub.center_of_mass()
-    reference_com = reference_sub.center_of_mass()
+    mobile_com = mobile_sub_pos.mean(axis=0, keepdims=True)
+    reference_com = reference_sub_pos.mean(axis=0, keepdims=True)
     
     # Center coordinates
-    mobile_pos = mobile_sub.positions - mobile_com
-    reference_pos = reference_sub.positions - reference_com
+    mobile_sub_pos_centered = mobile_sub_pos - mobile_com
+    reference_sub_pos_centered = reference_sub_pos - reference_com
     
     # Calculate rotation matrix using MDAnalysis
-    R, rmsd_rot = align.rotation_matrix(mobile_pos, reference_pos)
+    R, rmsd_rot = align.rotation_matrix(
+        mobile_sub_pos_centered, reference_sub_pos_centered
+    )
     if subselection is None:
         return rmsd_rot
     
-    # Apply rotation to mobile structure
-    mobile_pos = mobile_atoms.positions - mobile_com
-    mobile_pos_rotated = mobile_pos @ R
-    
     # Calculate RMSD
-    diff = mobile_pos_rotated - (reference_atoms.positions - reference_com)
+    diff = (mobile_pos - mobile_com) @ R.T - (reference_pos - reference_com)
     rmsd = np.sqrt(np.mean(np.sum(diff**2, axis=1)))
     
     return rmsd

@@ -9,7 +9,8 @@ from utils.utils import (
     load_structure_data,
     rotation_matrix,
     copy_atom_group,
-    calculate_rmsd
+    calculate_rmsd,
+    update_metadata
 )
 from utils.AFF_map import calc_AFF
 from utils.box_modify import adjust_ccl3_structure, adjust_ccl, compute_axis_direction, clean_gro_box
@@ -35,5 +36,6 @@ __all__ = [
     'analyze_ccl4_structure',
     'StructureAnalysisResult',
     'select_ccl4_molecules',
-    'rotate_ccl4_molecules'
+    'rotate_ccl4_molecules',
+    'update_metadata'
 ]

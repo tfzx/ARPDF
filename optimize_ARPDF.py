@@ -12,9 +12,10 @@ from torch.optim.lr_scheduler import ExponentialLR
 import matplotlib.pyplot as plt
 from ARPDF import compare_ARPDF, get_atoms_pos
 import utils
-from utils import calc_AFF
+from utils import calc_AFF, update_metadata
 from utils.core_functions import get_circular_weight, weighted_similarity, cosine_similarity
 from utils.core_functions_torch import generate_gaussian_kernel, gaussian_filter, get_abel_trans_mat, generate_field, toTensor, GND
+from tqdm import tqdm
 
 
 class ARPDFModel:
@@ -126,7 +127,6 @@ class ARPDFOptimizer:
             epochs=1000,
             loss_name="circular",
             device="cpu",
-            verbose=True,
         ):
         self.X = toTensor(X, device=device).float().contiguous()
         self.Y = toTensor(Y, device=device).float().contiguous()
@@ -144,21 +144,20 @@ class ARPDFOptimizer:
         self.epochs = epochs
         self.loss_name = loss_name
         self.device = device
-        self.verbose = verbose
         self._loss_func = self._get_loss_func(loss_name)
         self._prepare_weights(weight_cutoff=weight_cutoff)
 
     def set_system(
             self, 
-            cur_dir: Optional[str], 
+            out_dir: Optional[str], 
             u1: Optional[mda.Universe] = None, 
             u2: Optional[mda.Universe] = None, 
             modified_atoms: Optional[List[int]] = None, 
             polar_axis = None
         ):
         if any(x is None for x in (u1, modified_atoms, polar_axis)):
-            u1, u2, modified_atoms, polar_axis = utils.load_structure_data(cur_dir)
-        self.cur_dir = cur_dir if cur_dir else "tmp"
+            u1, u2, modified_atoms, polar_axis = utils.load_structure_data(out_dir)
+        self.out_dir = out_dir if out_dir else "tmp"
         self.u1 = u1
         self.modified_atoms = modified_atoms
         self.polar_axis = polar_axis
@@ -188,8 +187,9 @@ class ARPDFOptimizer:
     def _prepare_weights(self, weight_cutoff=6.0):
         R = self.model.R
         sigma_R = 1 / 3
-        self.W = torch.exp(-torch.clip(R - weight_cutoff, 0.0)**2 / (2 * sigma_R**2))
-        self.W /= self.W.sum()
+        self.cosine_weight = torch.exp(-torch.clip(R - weight_cutoff, 0.0)**2 / (2 * (0.5)**2))/(1 + torch.exp(-10 * (R - 1)))
+        # self.cosine_weight = torch.exp(-torch.clip(R - weight_cutoff, 0.0)**2 / (2 * sigma_R**2))
+        self.cosine_weight /= self.cosine_weight.sum()
         r0_arr = torch.linspace(0, 8, 40)
         dr0 = (r0_arr[1] - r0_arr[0]).item()
         self.circular_weights = toTensor(get_circular_weight(R.cpu().numpy(), r0_arr.numpy(), sigma=dr0/6.0), device=self.device).float()
@@ -209,7 +209,7 @@ class ARPDFOptimizer:
         return loss_func_map[loss_name.strip().lower()]
 
     def _loss_cosine(self, ARPDF_pred):
-        return -cosine_similarity(ARPDF_pred, self.ARPDF_exp, self.W)
+        return -cosine_similarity(ARPDF_pred, self.ARPDF_exp, self.cosine_weight)
 
     def _loss_circular(self, ARPDF_pred):
         return -torch.vdot(self.r_weight, weighted_similarity(self.circular_weights, ARPDF_pred, self.ARPDF_exp))
@@ -217,7 +217,7 @@ class ARPDFOptimizer:
     def _normalization(self, delta_pos):
         return torch.sum(delta_pos**2, dim=1).mean()
 
-    def optimize(self):
+    def optimize(self, verbose=True, log_step=5, print_step=50, leave=True, prefix="Optimizing Atoms"):
         traj = np.zeros((self.epochs + 1, self.num_atoms, 3), dtype=np.float32)
         log = {
             "epoch": [],
@@ -226,7 +226,7 @@ class ARPDFOptimizer:
             "cos_sim": [],
         }
 
-        for epoch in range(self.epochs):
+        for epoch in tqdm(range(self.epochs), desc=prefix, disable=not verbose, leave=leave, position=0):
             self.optimizer.zero_grad()
 
             delta_pos = self._get_delta_pos()
@@ -248,11 +248,11 @@ class ARPDFOptimizer:
 
             self.lr_scheduler.step()
 
-            if epoch % 5 == 0 and self.verbose:
+            if epoch % log_step == 0:
                 lr = self.lr_scheduler.get_last_lr()[0]
                 cos_sim = F.cosine_similarity(ARPDF_pred.flatten(), self.ARPDF_exp.flatten(), dim=0)
-                print(f"lr: {lr:.6f}")
-                print(f"Epoch {epoch}, Loss: {loss.item():.6f}, CosSim: {cos_sim.item():.6f}")
+                if verbose and epoch % print_step == 0:
+                    tqdm.write(f"Epoch {epoch}: Loss={loss.item():.6f}, CosSim={cos_sim.item():.6f}, LR={lr:.6f}")
                 log["epoch"].append(epoch)
                 log["lr"].append(lr)
                 log["loss"].append(loss.item())
@@ -265,19 +265,15 @@ class ARPDFOptimizer:
     def dump_results(self, traj, log):
         ARPDF_optimized = self.model(self.center_pos2_final) - self.image1
         fig = compare_ARPDF(ARPDF_optimized.cpu().numpy(), self.ARPDF_exp.cpu().numpy(), grids_XY=(self.X.cpu().numpy(), self.Y.cpu().numpy()), show_range=8.0)
-        fig.savefig(os.path.join(self.cur_dir, 'CCl4_optimized.png'))
-        np.save(os.path.join(self.cur_dir, 'traj.npy'), traj)
+        fig.savefig(os.path.join(self.out_dir, 'CCl4_optimized.png'))
+        np.save(os.path.join(self.out_dir, 'traj.npy'), traj)
         df = pd.DataFrame(log)
         df.reindex(columns=["epoch", "lr", "loss", "cos_sim"])
-        df.to_csv(os.path.join(self.cur_dir, 'log.txt'), index=False)
+        df.to_csv(os.path.join(self.out_dir, 'log.txt'), index=False)
         u2_opt = self.u1.copy()
         u2_opt.atoms[self.modified_atoms].positions = self.center_pos2_final.cpu().numpy()
-        u2_opt.atoms.write(os.path.join(self.cur_dir, 'CCl4_optimized.gro'))
-        metadata = {}
-        if os.path.exists(os.path.join(self.cur_dir, 'metadata.json')):
-            with open(os.path.join(self.cur_dir, 'metadata.json'), "r") as f:
-                metadata = json.load(f)
-        metadata.update({
+        u2_opt.atoms.write(os.path.join(self.out_dir, 'CCl4_optimized.gro'))
+        update_metadata(self.out_dir, {
             "optimization_info": {
                 "u2_opt_name": "CCl4_optimized.gro",
                 "log_name": "log.txt",
@@ -299,6 +295,3 @@ class ARPDFOptimizer:
                 },
             }
         })
-        with open(os.path.join(self.cur_dir, 'metadata.json'), "w") as f:
-            json.dump(metadata, f, indent=4)
-        plt.show()

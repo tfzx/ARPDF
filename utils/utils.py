@@ -363,6 +363,36 @@ def calculate_rmsd(
     
     return rmsd
 
+
+def update_metadata(dir_path: str, metadata: dict) -> None:
+    """
+    Update and save metadata to a JSON file. If the file already exists, the new metadata will be merged with the existing one.
+
+    Args:
+        dir_path (str): Directory to save the metadata file.
+        metadata (dict): New metadata to be saved.
+    """
+    filepath = os.path.join(dir_path, "metadata.json")
+    existing_metadata = {}
+
+    # Try to read existing metadata if the file exists
+    if os.path.exists(filepath):
+        with open(filepath, "r") as f:
+            try:
+                existing_metadata = json.load(f)
+                if not isinstance(existing_metadata, dict):
+                    existing_metadata = {}
+            except json.JSONDecodeError:
+                pass  # If the file is corrupted, ignore and overwrite
+
+    # Merge existing metadata with new metadata
+    existing_metadata.update(metadata)
+
+    # Save the merged metadata
+    with open(filepath, "w") as f:
+        json.dump(existing_metadata, f, indent=4)
+
+
 if __name__ == "__main__":
     import cupy as cp
     # Test box_shift

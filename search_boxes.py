@@ -5,9 +5,9 @@ import numpy as np
 import MDAnalysis as mda
 import json
 from ARPDF import compute_ARPDF, compare_ARPDF
-from utils import copy_atom_group, select_nbr_mols, clean_gro_box, rotate_ccl4_molecules, select_ccl4_molecules
+from utils import select_nbr_mols, clean_gro_box, rotate_ccl4_molecules, select_ccl4_molecules, update_metadata
 from utils.core_functions import cosine_similarity, to_cupy, get_circular_weight, weighted_similarity, oneD_similarity, angular_average_similarity 
-from ccl4_modifier import CCL4Mod_CL, select_cl_atoms
+from ccl4_modifier import CCL4Modifier_CL, select_cl_atoms
 from typing import Callable, List, Tuple, Optional, Protocol
 from dataclasses import dataclass
 
@@ -24,7 +24,7 @@ class SearchResult:
         modified_atoms (List[int]): Indices of modified atoms
     """
     molecule: int
-    polar_axis: np.ndarray
+    polar_axis: List[float]
     modified_universe: mda.Universe
     ARPDF: np.ndarray
     similarity: float
@@ -228,7 +228,9 @@ class StructureSearcher:
         # Prepare metadata with search parameters
         grids_range = (X.min(), X.max(), Y.min(), Y.max())
         grids_range = list(float(x) for x in grids_range)
-        metadata = {
+
+        # Save metadata
+        update_metadata(self.output_dir, {
             "name": "CCl4",
             "structure_info": {
                 "u1_name": "CCl4.gro",
@@ -264,10 +266,7 @@ class StructureSearcher:
                     "molecule": worst_result.molecule
                 }
             },
-        }
-
-        # Save metadata
-        self._update_and_save_metadata(metadata)
+        })
 
     def _save_single_result(self, result: SearchResult, prefix: str) -> None:
         """
@@ -283,34 +282,6 @@ class StructureSearcher:
         fig = compare_ARPDF(result.ARPDF, ARPDF_ref, (X, Y), cos_sim=result.similarity, show_range=8.0)
         fig.savefig(f"{self.output_dir}/{prefix}.png")
 
-    def _update_and_save_metadata(self, metadata: dict, filename: str = "metadata.json") -> None:
-        """
-        Update and save metadata to a JSON file. If the file already exists, the new metadata will be merged with the existing one.
-
-        Args:
-            metadata (dict): New metadata to be saved.
-            output_dir (str): Directory to save the metadata file.
-            filename (str, optional): Name of the metadata file. Defaults to "metadata.json".
-        """
-        filepath = os.path.join(self.output_dir, filename)
-        existing_metadata = {}
-
-        # Try to read existing metadata if the file exists
-        if os.path.exists(filepath):
-            with open(filepath, "r") as f:
-                try:
-                    existing_metadata = json.load(f)
-                    if not isinstance(existing_metadata, dict):
-                        existing_metadata = {}
-                except json.JSONDecodeError:
-                    pass  # If the file is corrupted, ignore and overwrite
-
-        # Merge existing metadata with new metadata
-        existing_metadata.update(metadata)
-
-        # Save the merged metadata
-        with open(filepath, "w") as f:
-            json.dump(existing_metadata, f, indent=4)
 
 def workflow_demo(
         X, Y, ARPDF_ref, 
@@ -337,7 +308,7 @@ def workflow_demo(
         grids_XY=(X, Y),
         ARPDF_ref=ARPDF_ref,
         molecule_selector=select_cl_atoms,
-        structure_modifier=CCL4Mod_CL(universe, stretch_distances, periodic=True),
+        structure_modifier=CCL4Modifier_CL(universe, stretch_distances, periodic=True),
         filter_fourier=filter_fourier,
         sigma0=sigma0,
         metric=metric,

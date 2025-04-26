@@ -40,14 +40,10 @@ def box_shift(dx: ArrayType, box: Optional[List[float]] = None) -> ArrayType:
     cell = box_to_cell(box)
     return dx - xp.round(dx @ xp.linalg.inv(cell)) @ cell
 
-def select_mols(universe: mda.Universe, center_atoms: List[int], nbr_distance: float | None = None, periodic = True):
+def select_nbr_mols(universe: mda.Universe, center_atoms: List[int], nbr_distance: float | None = None, periodic = True):
     """
     Select molecules within the specified distance from the center atoms.
     """
-    if periodic:
-        box = universe.dimensions
-    else:
-        box = None
     center_group = universe.atoms[center_atoms]
     if nbr_distance is not None:
         center_group = center_group + universe.select_atoms(f"around {nbr_distance} group center", center=center_group, periodic=periodic)
@@ -303,6 +299,14 @@ def rotation_matrix(v1: np.ndarray, v2: np.ndarray) -> np.ndarray:
         return np.eye(3)
     u /= np.linalg.norm(u)
     return np.eye(3) - 2 * np.outer(u, u)
+
+def copy_atom_group(atom_group: mda.AtomGroup) -> mda.AtomGroup:
+    """
+    Copy an atom group to a new universe.
+    """
+    new_universe = mda.Merge(atom_group)
+    new_universe.dimensions = atom_group.dimensions
+    return new_universe.atoms
 
 def calculate_rmsd(
     mobile: mda.Universe,

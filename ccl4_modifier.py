@@ -1,7 +1,7 @@
 from typing import List
 from utils import compute_axis_direction, adjust_ccl
 
-def select_center_molecules(universe):
+def select_cl_atoms(universe):
     """Select Cl atoms as center molecules for analysis
     
     Args:
@@ -13,7 +13,7 @@ def select_center_molecules(universe):
     cl_atoms = universe.atoms.select_atoms("name Cl")
     return list(cl_atoms.indices)
 
-class StructureModifier:
+class CCL4Mod_CL:
     """Handle molecular structure modifications for CCl4"""
     
     def __init__(self, universe, stretch_distances: List[float] = None, periodic: bool = None):

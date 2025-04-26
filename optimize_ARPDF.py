@@ -126,6 +126,7 @@ class ARPDFOptimizer:
             epochs=1000,
             loss_name="circular",
             device="cpu",
+            verbose=True,
         ):
         self.X = toTensor(X, device=device).float().contiguous()
         self.Y = toTensor(Y, device=device).float().contiguous()
@@ -143,6 +144,7 @@ class ARPDFOptimizer:
         self.epochs = epochs
         self.loss_name = loss_name
         self.device = device
+        self.verbose = verbose
         self._loss_func = self._get_loss_func(loss_name)
         self._prepare_weights(weight_cutoff=weight_cutoff)
 
@@ -246,7 +248,7 @@ class ARPDFOptimizer:
 
             self.lr_scheduler.step()
 
-            if epoch % 5 == 0:
+            if epoch % 5 == 0 and self.verbose:
                 lr = self.lr_scheduler.get_last_lr()[0]
                 cos_sim = F.cosine_similarity(ARPDF_pred.flatten(), self.ARPDF_exp.flatten(), dim=0)
                 print(f"lr: {lr:.6f}")

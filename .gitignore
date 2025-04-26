@@ -5,3 +5,6 @@ __pycache__/
 *.egg-info
 .vscode
 tmp*
+
+.cursor
+test.ipynb

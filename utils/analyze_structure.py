@@ -13,6 +13,7 @@ class StructureAnalysisResult:
     dist_C_B_CL_B: float  # Distance between C and CL in second molecule
     dist_C_A_C_B: float  # Distance between two C atoms
     theta_CL_A_CL_B: float  # Angle between CL-CL vector and target axis (in degrees)
+    umbrella_angle: float # Angle of CCl3 cylinder
 
 def select_ccl4_molecules(
         u: mda.Universe,
@@ -56,6 +57,53 @@ def select_ccl4_molecules(
 
     # Return combined ordered indices
     return mol_A_indices + mol_B_indices
+
+
+def select_nearest_ccl4_molecules(
+        u: mda.Universe,
+        cl_index: int,
+        n_neighbors: int = 3,  # 新增参数
+        cutoff_distance: float = 10.0,  # 给大一点保证能找到足够多
+    ) -> List[List[int]]:
+    """
+    Select CCl4 molecules for analysis.
+
+    Args:
+        u (mda.Universe): MDAnalysis universe containing the structure
+        cl_index (int): Index of the reference CL atom
+        n_neighbors (int): Number of nearest neighbors to find
+        cutoff_distance (float): Distance cutoff
+    Returns:
+        List[List[int]]: List of indices list for each neighbor
+    """
+    CL_A = u.atoms[cl_index]
+    resid_A = CL_A.resid
+    mol_A = u.select_atoms(f"resid {resid_A}")
+    C_A = mol_A[np.nonzero(np.array(mol_A.types) == 'C')[0]][0]
+
+    # Find nearby CL atoms
+    around_group = u.select_atoms(f"(around {cutoff_distance} group mol_A) and type CL", mol_A=mol_A)
+    d = mda_dist.distance_array(CL_A.position, around_group.positions, u.dimensions)[0]
+
+    # 按距离排序，取最近的n_neighbors个
+    nearest_indices = d.argsort()[:n_neighbors]
+    CL_B_list = [around_group[i] for i in nearest_indices]
+
+    result = []
+    for CL_B in CL_B_list:
+        resid_B = CL_B.resid
+        mol_B = u.select_atoms(f"resid {resid_B}")
+        C_B = mol_B[np.nonzero(np.array(mol_B.types) == 'C')[0]][0]
+
+        mol_A_indices = [C_A.index, CL_A.index] + [i for i in mol_A.indices if i not in [C_A.index, CL_A.index]]
+        mol_B_indices = [C_B.index, CL_B.index] + [i for i in mol_B.indices if i not in [C_B.index, CL_B.index]]
+
+        # 一组组合：自己（mol_A）和一个邻居（mol_B）
+        result.append(mol_A_indices + mol_B_indices)
+
+    return result  # 注意，这里是 List[List[int]]
+
+
 
 def rotate_ccl4_molecules(
         u: mda.Universe,
@@ -146,6 +194,25 @@ def analyze_ccl4_structure(
     
     vector_CL_A_CL_B = (CL_B - CL_A) / (dist_CL_A_CL_B + 1e-10)
     theta_CL_A_CL_B = np.arccos(np.dot(vector_CL_A_CL_B, polar_axis))
+
+    # 取出除了参考Cl之外的其他3个Cl
+    other_CLs = mol_A[2:]  # shape (3, 3)
+
+    # 计算Cl3平面的法向量
+    v1 = other_CLs[1] - other_CLs[0]
+    v2 = other_CLs[2] - other_CLs[0]
+    normal_vector = np.cross(v1, v2)
+    normal_vector /= np.linalg.norm(normal_vector)  # 单位化
+
+    # 计算C到参考Cl的向量
+    vec_C_to_CL = CL_A - C_A
+    vec_C_to_CL /= np.linalg.norm(vec_C_to_CL)  # 单位化
+
+    # 计算伞角（umbrella angle）
+    cos_angle = np.clip(np.dot(vec_C_to_CL, normal_vector), -1.0, 1.0)
+    umbrella_angle = np.arccos(cos_angle)  # radians
+    umbrella_angle = np.degrees(umbrella_angle)  # degrees
+
     
     # Return results
     return StructureAnalysisResult(
@@ -153,6 +220,7 @@ def analyze_ccl4_structure(
         dist_CL_A_CL_B=dist_CL_A_CL_B,
         dist_C_B_CL_B=dist_C_B_CL_B,
         dist_C_A_C_B=dist_C_A_C_B,
-        theta_CL_A_CL_B=np.degrees(theta_CL_A_CL_B)
+        theta_CL_A_CL_B=np.degrees(theta_CL_A_CL_B),
+        umbrella_angle=umbrella_angle
     )
 

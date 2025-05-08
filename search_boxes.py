@@ -69,6 +69,8 @@ class SimilarityCalculator:
         # Cosine weight
         self.cos_weight = cp.exp(-cp.maximum(self.R - self.weight_cutoff, 0)**2 / (2 * (0.5)**2))/(1 + cp.exp(-10 * (self.R - 1)))
         
+        # Cosine_r weight
+        self.cos_r_weight = cp.exp(-cp.maximum(self.R - self.weight_cutoff, 0)**2 / (2 * (0.5)**2))/((1 + cp.exp(-20 * (self.R - 1)))*(self.R + 1e-8))
         # Circular weights
         self.r0_arr = cp.linspace(0, 8, 40)
         dr0 = self.r0_arr[1] - self.r0_arr[0]
@@ -92,6 +94,7 @@ class SimilarityCalculator:
         """Get the appropriate metric function"""
         metric_funcs = {
             'cosine': lambda x, y: cosine_similarity(x, y, self.cos_weight),
+            'cosine_r': lambda x, y: cosine_similarity(x, y, self.cos_r_weight),
             'circle': lambda x, y: cp.vdot(self.r_weight, weighted_similarity(self.circular_weights, x, y)),
             '1D': lambda x, y: oneD_similarity(x, y, axis=0, weight=self.axis_weight),
             '1D_average': lambda x, y: angular_average_similarity(x, y, weight=self.average_weight)

@@ -133,7 +133,7 @@ class ARPDFOptimizer:
         self.ARPDF_exp = toTensor(ARPDF_exp, device=device).float().contiguous()
         self.h = X[1, 1] - X[0, 0]
         self.type_counts = type_counts
-        self.model = ARPDFModel(X, Y, type_counts, filter_fourier, cutoff, sigma0, field_batch_size=128).to(device=device)
+        self.model = ARPDFModel(X, Y, type_counts, filter_fourier, cutoff, sigma0, field_batch_size=512).to(device=device)
         self.cutoff = cutoff
         self.sigma0 = sigma0
         self.f_lb = f_lb
@@ -278,6 +278,7 @@ class ARPDFOptimizer:
                 "u2_opt_name": "CCl4_optimized.gro",
                 "log_name": "log.txt",
                 "traj_name": "traj.npy",
+                "optimized_atoms": [int(x) for x in self.modified_atoms],
                 "ARPDF_size": self.ARPDF_exp.shape,
                 "type_counts": self.type_counts,
                 "hyperparameters": {

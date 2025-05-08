@@ -83,9 +83,12 @@ def get_atoms_pos(
     ) -> Tuple[np.ndarray, np.ndarray, Dict[Tuple[str, str], np.ndarray]]:
     center_group = universe.atoms[modified_atoms]
     around_group = universe.select_atoms(f"around {cutoff} group center", center=center_group, periodic=periodic)
+    center_pos = center_group.positions
+    around_pos = around_group.positions
     if periodic:
-        _center = np.mean(center_group.positions, axis=0)
-        around_group.positions = _center[None, :] + box_shift(around_group.positions - _center[None, :], box=universe.dimensions)
+        _center = center_pos[[0]]
+        center_pos = _center + box_shift(center_pos - _center, box=universe.dimensions)
+        around_pos = _center + box_shift(around_pos - _center, box=universe.dimensions)
     concat_group = center_group + around_group
     
     mask = np.triu(np.ones((len(center_group), len(concat_group)), dtype=np.bool_), k=1)
@@ -103,7 +106,7 @@ def get_atoms_pos(
         for type2 in all_atom_types[i:]:
             pair_mask = np.all(atom_pair_types == [type1, type2], axis=1)
             atom_pairs[(type1, type2)] = ij_idx[pair_mask]
-    return center_group.positions, around_group.positions, center_group.masses, atom_pairs
+    return center_pos, around_pos, center_group.masses, atom_pairs
 
 def compute_fields(
     atom_pairs: Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]],

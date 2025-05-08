@@ -14,7 +14,7 @@ from utils.utils import (
 )
 from utils.AFF_map import calc_AFF
 from utils.box_modify import adjust_ccl3_structure, adjust_ccl, compute_axis_direction, clean_gro_box
-from utils.analyze_structure import analyze_ccl4_structure, StructureAnalysisResult, select_ccl4_molecules, rotate_ccl4_molecules
+from utils.analyze_structure import analyze_ccl4_structure, StructureAnalysisResult, select_ccl4_molecules, select_nearest_ccl4_molecules, rotate_ccl4_molecules
 
 __all__ = [
     'box_shift',
@@ -36,6 +36,7 @@ __all__ = [
     'analyze_ccl4_structure',
     'StructureAnalysisResult',
     'select_ccl4_molecules',
+    'select_nearest_ccl4_molecules',
     'rotate_ccl4_molecules',
     'update_metadata'
 ]

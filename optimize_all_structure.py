@@ -9,6 +9,7 @@ from tqdm import tqdm
 from optimize_ARPDF import ARPDFOptimizer
 from search_boxes import SearchResult
 from utils import load_structure_data, generate_grids, update_metadata, select_nbr_mols
+from utils.analyze_structure import select_ccl4_molecules
 import json
 
 def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
@@ -84,12 +85,14 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
         })
 
         # Set the system for optimization
-        modified_atoms = select_nbr_mols(u1_ref, result.modified_atoms, nbr_distance=None, periodic=True)
+        # optimized_atoms = select_nbr_mols(u1_ref, result.modified_atoms, nbr_distance=None, periodic=True)
+        optimized_atoms = select_ccl4_molecules(result.modified_universe, result.molecule)
+        tqdm.write(f"Stucture {i + 1}/{total_structures}: optimizing atoms {optimized_atoms}.")
         optimizer.set_system(
             out_dir=struct_dir,
             u1=u1_ref,
             u2=result.modified_universe,
-            modified_atoms=modified_atoms,
+            modified_atoms=optimized_atoms,
             polar_axis=result.polar_axis
         )
 
@@ -101,5 +104,5 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
 
 # Example usage
 if __name__ == "__main__":
-    exp_dir = "tmp/exp_opt_1D_avg"  # Adjust based on your directory
+    exp_dir = "tmp/exp_opt_1D_avg_2"  # Adjust based on your directory
     optimize_all_structures(exp_dir)

@@ -88,10 +88,41 @@ def weighted_similarity(weights, image1, image2):
     xp = get_array_module(image1)
     def inner(w, x1, x2):
         return xp.einsum("ijk,jk,jk->i", w, x1, x2)
-    C = 0.01
+    C = 0.005
     def weighted_sim(w, x, y):
         return (inner(w, x, y) / (xp.sqrt(inner(w, x, x)) + 1e-8) + C) / (xp.sqrt(inner(w, y, y)) + C)
     return weighted_sim(weights, image1, image2)
+
+def weighted_similarity_scale(weights, image1, image2):
+    xp = get_array_module(image1)
+    
+    def inner(w, x1, x2):
+        return xp.einsum("ijk,jk,jk->i", w, x1, x2)
+    
+    C = 0.005
+
+    def weighted_sim(w, x, y):
+        sim = (inner(w, x, y) / (xp.sqrt(inner(w, x, x)) + 1e-8) + C) / (xp.sqrt(inner(w, y, y)) + C)
+        return sim
+    weighted = weighted_sim(weights, image1, image2)
+
+    # strength pattern similarity（每圈强度的比例）
+    def get_strength(img):
+        # weights: (n, h, w), img: (h, w)
+        squared = img**2  # (h, w)
+        weighted_sum = xp.einsum("ijk,jk->i", weights, squared) 
+        return xp.sqrt(weighted_sum + 1e-8)
+    
+    s1 = get_strength(image1)
+    s2 = get_strength(image2)
+    
+    s1 /= xp.linalg.norm(s1) + 1e-8
+    s2 /= xp.linalg.norm(s2) + 1e-8
+    strength_similarity = xp.dot(s1, s2)
+
+    # 返回联合相似度（乘起来）
+    return (weighted * strength_similarity)
+    
 
 def get_circular_weight(R_grids, r0, sigma):
     """ Get the 2D Rice ditribution at radius r0 with sigma """

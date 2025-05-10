@@ -56,7 +56,7 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
         s=0.0, 
         beta=0.0, 
         epochs=500,
-        loss_name="cosine",
+        loss_name="circular",
         device=device
     )
     total_structures = len(results)
@@ -85,8 +85,8 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
         })
 
         # Set the system for optimization
-        # optimized_atoms = select_nbr_mols(u1_ref, result.modified_atoms, nbr_distance=None, periodic=True)
-        optimized_atoms = select_ccl4_molecules(result.modified_universe, result.molecule)
+        optimized_atoms = select_nbr_mols(u1_ref, result.modified_atoms, nbr_distance=None, periodic=True)
+        # optimized_atoms = select_ccl4_molecules(result.modified_universe, result.molecule)
         tqdm.write(f"Stucture {i + 1}/{total_structures}: optimizing atoms {optimized_atoms}.")
         optimizer.set_system(
             out_dir=struct_dir,
@@ -104,5 +104,5 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
 
 # Example usage
 if __name__ == "__main__":
-    exp_dir = "tmp/exp_opt_1D_avg_2"  # Adjust based on your directory
+    exp_dir = "tmp/exp_opt_1D_avg_circle"  # Adjust based on your directory
     optimize_all_structures(exp_dir)

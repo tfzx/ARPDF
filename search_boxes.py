@@ -6,7 +6,7 @@ import MDAnalysis as mda
 import json
 from ARPDF import compute_ARPDF, compare_ARPDF
 from utils import select_nbr_mols, clean_gro_box, rotate_ccl4_molecules, select_ccl4_molecules, update_metadata
-from utils.core_functions import cosine_similarity, to_cupy, get_circular_weight, weighted_similarity, oneD_similarity, angular_average_similarity 
+from utils.core_functions import cosine_similarity, to_cupy, get_circular_weight, weighted_similarity, oneD_similarity, angular_average_similarity,weighted_similarity_scale 
 from ccl4_modifier import CCL4Modifier_CL, select_cl_atoms
 from typing import Callable, List, Tuple, Optional, Protocol
 from dataclasses import dataclass
@@ -97,7 +97,8 @@ class SimilarityCalculator:
             'cosine_r': lambda x, y: cosine_similarity(x, y, self.cos_r_weight),
             'circle': lambda x, y: cp.vdot(self.r_weight, weighted_similarity(self.circular_weights, x, y)),
             '1D': lambda x, y: oneD_similarity(x, y, axis=0, weight=self.axis_weight),
-            '1D_average': lambda x, y: angular_average_similarity(x, y, weight=self.average_weight)
+            '1D_average': lambda x, y: angular_average_similarity(x, y, weight=self.average_weight),
+            'circle_scale': lambda x, y: cp.vdot(self.r_weight, weighted_similarity_scale(self.circular_weights, x, y))
         }
         return metric_funcs[metric]
 

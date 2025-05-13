@@ -56,7 +56,7 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
         s=0.0, 
         beta=0.0, 
         epochs=500,
-        loss_name="circular",
+        loss_name="circular_scale",
         device=device
     )
     total_structures = len(results)
@@ -104,5 +104,5 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
 
 # Example usage
 if __name__ == "__main__":
-    exp_dir = "tmp/exp_opt_1D_avg_circle"  # Adjust based on your directory
+    exp_dir = "tmp/exp_scalecircle_5nm_cutoff_5"  # Adjust based on your directory
     optimize_all_structures(exp_dir)

@@ -12,10 +12,11 @@ from torch.optim.lr_scheduler import ExponentialLR
 import matplotlib.pyplot as plt
 from ARPDF import compare_ARPDF, get_atoms_pos
 import utils
-from utils import calc_AFF, update_metadata
-from utils.core_functions import get_circular_weight, weighted_similarity, cosine_similarity, weighted_similarity_scale
+from utils import calc_AFF, update_metadata, box_shift
+from utils.similarity import get_angular_filters, cosine_similarity, angular_similarity, strength_similarity
 from utils.core_functions_torch import generate_gaussian_kernel, gaussian_filter, get_abel_trans_mat, generate_field, toTensor, GND
 from tqdm import tqdm
+
 
 
 class ARPDFModel:
@@ -125,7 +126,7 @@ class ARPDFOptimizer:
             s=0.1, 
             beta=0.1, 
             epochs=1000,
-            loss_name="circular",
+            loss_name="angular",
             device="cpu",
         ):
         self.X = toTensor(X, device=device).float().contiguous()
@@ -135,6 +136,7 @@ class ARPDFOptimizer:
         self.type_counts = type_counts
         self.model = ARPDFModel(X, Y, type_counts, filter_fourier, cutoff, sigma0, field_batch_size=512).to(device=device)
         self.cutoff = cutoff
+        self.weight_cutoff = weight_cutoff
         self.sigma0 = sigma0
         self.f_lb = f_lb
         self.lr = lr
@@ -145,7 +147,7 @@ class ARPDFOptimizer:
         self.loss_name = loss_name
         self.device = device
         self._loss_func = self._get_loss_func(loss_name)
-        self._prepare_weights(weight_cutoff=weight_cutoff)
+        self._prepare_weights(weight_cutoff)
 
     def set_system(
             self, 
@@ -163,9 +165,12 @@ class ARPDFOptimizer:
         self.polar_axis = polar_axis
         center_pos1, around_pos1, center_masses, atom_pairs = get_atoms_pos(u1, modified_atoms, cutoff=self.cutoff + 2.0, periodic=True)
         if u2 is not None:
-            center_pos2, _, _, _ = get_atoms_pos(u2, modified_atoms, cutoff=self.cutoff + 2.0, periodic=True)
+            center_pos2 = u2.atoms.positions[modified_atoms]
+            _center = u1.atoms.positions[modified_atoms[0]]
+            center_pos2 = _center + box_shift(center_pos2 - _center, box=u1.dimensions)
         else:
             center_pos2 = np.copy(center_pos1)
+        print(center_pos1, center_pos2)
         self.center_pos1 = toTensor(center_pos1, device=self.device).float()
         self.center_pos2_init = toTensor(center_pos2, device=self.device).float()
         self.center_masses = toTensor(center_masses, device=self.device).float()
@@ -186,16 +191,15 @@ class ARPDFOptimizer:
     
     def _prepare_weights(self, weight_cutoff=6.0):
         R = self.model.R
-        sigma_R = 1 / 3
+        sigma_R = 1 / 2
         self.cosine_weight = torch.exp(-torch.clip(R - weight_cutoff, 0.0)**2 / (2 * (0.5)**2))/(1 + torch.exp(-10 * (R - 1)))
-        # self.cosine_weight = torch.exp(-torch.clip(R - weight_cutoff, 0.0)**2 / (2 * sigma_R**2))
         self.cosine_weight /= self.cosine_weight.sum()
         r0_arr = torch.linspace(0, 8, 40)
         dr0 = (r0_arr[1] - r0_arr[0]).item()
-        self.circular_weights = toTensor(get_circular_weight(R.cpu().numpy(), r0_arr.numpy(), sigma=dr0/6.0), device=self.device).float()
-        r_weight = torch.exp(-torch.clip(r0_arr - weight_cutoff, 0)**2 / (2 * (sigma_R)**2)).to(device=self.device, dtype=torch.float32)
+        self.angular_filters = toTensor(get_angular_filters(R.cpu().numpy(), r0_arr.numpy(), sigma=dr0/6.0), device=self.device).float()
+        r_weight = torch.exp(-torch.clip(r0_arr - weight_cutoff, 0)**2 / (2 * (sigma_R)**2))# / (1 + torch.exp(-10 * (r0_arr - 1)))
         r_weight /= r_weight.sum()
-        self.r_weight = r_weight
+        self.r_weight = r_weight.to(device=self.device, dtype=torch.float32)
 
 
     def _get_delta_pos(self):
@@ -204,19 +208,19 @@ class ARPDFOptimizer:
     def _get_loss_func(self, loss_name: str) -> Callable[[torch.Tensor], torch.Tensor]:
         loss_func_map = {
             "cosine": self._loss_cosine,
-            "circular": self._loss_circular,
-            "circular_scale":self._loss_circular_scale
+            "angular": self._loss_angular,
+            "angular_scale":self._loss_angular_scale
         }
         return loss_func_map[loss_name.strip().lower()]
 
     def _loss_cosine(self, ARPDF_pred):
         return -cosine_similarity(ARPDF_pred, self.ARPDF_exp, self.cosine_weight)
 
-    def _loss_circular(self, ARPDF_pred):
-        return -torch.vdot(self.r_weight, weighted_similarity(self.circular_weights, ARPDF_pred, self.ARPDF_exp))
+    def _loss_angular(self, ARPDF_pred):
+        return -angular_similarity(ARPDF_pred, self.ARPDF_exp, self.angular_filters, self.r_weight)
     
-    def _loss_circular_scale(self, ARPDF_pred):
-        return -torch.vdot(self.r_weight, weighted_similarity_scale(self.circular_weights, ARPDF_pred, self.ARPDF_exp))
+    def _loss_angular_scale(self, ARPDF_pred):
+        return -angular_similarity(ARPDF_pred, self.ARPDF_exp, self.angular_filters, self.r_weight) * strength_similarity(ARPDF_pred, self.ARPDF_exp, self.angular_filters, self.r_weight)
 
     def _normalization(self, delta_pos):
         return torch.sum(delta_pos**2, dim=1).mean()
@@ -268,7 +272,13 @@ class ARPDFOptimizer:
     
     def dump_results(self, traj, log):
         ARPDF_optimized = self.model(self.center_pos2_final) - self.image1
-        fig = compare_ARPDF(ARPDF_optimized.cpu().numpy(), self.ARPDF_exp.cpu().numpy(), grids_XY=(self.X.cpu().numpy(), self.Y.cpu().numpy()), show_range=8.0)
+        sim_name = self.loss_name.replace("_", " ").title()
+        fig = compare_ARPDF(
+            ARPDF_optimized.cpu().numpy(), self.ARPDF_exp.cpu().numpy(), 
+            grids_XY=(self.X.cpu().numpy(), self.Y.cpu().numpy()), 
+            sim_name=f"{sim_name} Sim", sim_value=-self._loss_func(ARPDF_optimized).item(),
+            show_range=8.0, weight_cutoff=self.weight_cutoff
+        )
         fig.savefig(os.path.join(self.out_dir, 'CCl4_optimized.png'))
         np.save(os.path.join(self.out_dir, 'traj.npy'), traj)
         df = pd.DataFrame(log)
@@ -288,7 +298,7 @@ class ARPDFOptimizer:
                 "hyperparameters": {
                     "cutoff": self.cutoff,
                     "sigma0": self.sigma0,
-                    "weight_cutoff": self.cutoff,
+                    "weight_cutoff": self.weight_cutoff,
                     "lr": self.lr,
                     "gamma": self.gamma,
                     "f_lb": self.f_lb,

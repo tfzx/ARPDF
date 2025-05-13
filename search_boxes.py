@@ -3,10 +3,10 @@ import pickle
 import cupy as cp
 import numpy as np
 import MDAnalysis as mda
-import json
 from ARPDF import compute_ARPDF, compare_ARPDF
 from utils import select_nbr_mols, clean_gro_box, rotate_ccl4_molecules, select_ccl4_molecules, update_metadata
-from utils.core_functions import cosine_similarity, to_cupy, get_circular_weight, weighted_similarity, oneD_similarity, angular_average_similarity,weighted_similarity_scale 
+from utils.similarity import cosine_similarity, get_angular_filters, angular_similarity, strength_similarity, oneD_similarity, angular_average_similarity
+from utils.core_functions import to_cupy
 from ccl4_modifier import CCL4Modifier_CL, select_cl_atoms
 from typing import Callable, List, Tuple, Optional, Protocol
 from dataclasses import dataclass
@@ -74,7 +74,7 @@ class SimilarityCalculator:
         # Circular weights
         self.r0_arr = cp.linspace(0, 8, 40)
         dr0 = self.r0_arr[1] - self.r0_arr[0]
-        self.circular_weights = get_circular_weight(self.R, self.r0_arr, sigma=dr0/6.0)
+        self.angular_filters = get_angular_filters(self.R, self.r0_arr, sigma=dr0/6.0)
         self.r_weight = cp.exp(-cp.maximum(self.r0_arr - self.weight_cutoff, 0)**2 / (2 * (0.5)**2))/ (1 + cp.exp(-10 * (self.r0_arr - 1)))
         self.r_weight /= self.r_weight.sum()
         
@@ -95,10 +95,10 @@ class SimilarityCalculator:
         metric_funcs = {
             'cosine': lambda x, y: cosine_similarity(x, y, self.cos_weight),
             'cosine_r': lambda x, y: cosine_similarity(x, y, self.cos_r_weight),
-            'circle': lambda x, y: cp.vdot(self.r_weight, weighted_similarity(self.circular_weights, x, y)),
             '1D': lambda x, y: oneD_similarity(x, y, axis=0, weight=self.axis_weight),
             '1D_average': lambda x, y: angular_average_similarity(x, y, weight=self.average_weight),
-            'circle_scale': lambda x, y: cp.vdot(self.r_weight, weighted_similarity_scale(self.circular_weights, x, y))
+            'angular': lambda x, y: angular_similarity(x, y, self.angular_filters, self.r_weight),
+            'angular_scale': lambda x, y: angular_similarity(x, y, self.angular_filters, self.r_weight) * strength_similarity(x, y, self.angular_filters, self.r_weight)
         }
         return metric_funcs[metric]
 
@@ -283,7 +283,12 @@ class StructureSearcher:
         X, Y, ARPDF_ref = self.X, self.Y, self.ARPDF_ref
         save_ccl4_result(result, f"{self.output_dir}/{prefix}_selected.gro", nbr_distance=5.0)
         # Save visualization
-        fig = compare_ARPDF(result.ARPDF, ARPDF_ref, (X, Y), cos_sim=result.similarity, show_range=8.0)
+        _metric_name = self.metric.replace("_", " ").title()
+        fig = compare_ARPDF(
+            result.ARPDF, ARPDF_ref, (X, Y), 
+            sim_name=f"{_metric_name} Sim", sim_value=result.similarity, 
+            show_range=8.0, weight_cutoff=self.weight_cutoff
+        )
         fig.savefig(f"{self.output_dir}/{prefix}.png")
 
 

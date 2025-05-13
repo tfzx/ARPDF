@@ -6,7 +6,7 @@ import MDAnalysis as mda
 import json
 from ARPDF import compute_ARPDF, compare_ARPDF
 from utils import preprocess_ARPDF, box_shift
-from utils.core_functions import cosine_similarity, to_cupy, get_circular_weight, weighted_similarity
+from utils.similarity import cosine_similarity, get_angular_filters, weighted_similarity
 from utils import compute_axis_direction, adjust_ccl3_structure
 
 def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=10.0, metric='cosine', weight_cutoff=4.0):
@@ -66,7 +66,7 @@ def search_structure(universe, grids_XY, ARPDF_exp, filter_fourier=None, cutoff=
     cos_weight = cp.exp(-cp.maximum(R - weight_cutoff, 0)**2 / (2 * (1 / 3)**2))
     r0_arr = cp.linspace(0, 8, 40)
     dr0 = r0_arr[1] - r0_arr[0]
-    circular_weights = get_circular_weight(R, r0_arr, sigma=dr0/6.0)
+    circular_weights = get_angular_filters(R, r0_arr, sigma=dr0/6.0)
     r_weight = cp.exp(-cp.maximum(r0_arr - weight_cutoff, 0)**2 / (2 * (1 / 3)**2))
     r_weight /= r_weight.sum()
     results = {}
@@ -108,7 +108,7 @@ def workflow_demo(X, Y, ARPDF_ref, filter_fourier=None, exp_name: str="exp", met
         print(f"Molecule {best_mol}: Similarity = {similarity}")
         print(f"Polar axis: {polar_axis}")
         print(f"Modified atoms: {modified_atoms}")
-        fig = compare_ARPDF(ARPDF, ARPDF_ref, (X, Y), cos_sim=similarity, show_range=8.0)
+        fig = compare_ARPDF(ARPDF, ARPDF_ref, (X, Y), sim_value=similarity, show_range=8.0)
         fig.savefig(f"{out_dir}/CH3CN_best_init.png")
         # plt.show()
         universe.atoms.write(f"{out_dir}/CH3CN.gro")

@@ -116,8 +116,8 @@ def weighted_similarity_scale(weights, image1, image2):
     s1 = get_strength(image1)
     s2 = get_strength(image2)
     
-    s1 /= xp.linalg.norm(s1) + 1e-8
-    s2 /= xp.linalg.norm(s2) + 1e-8
+    s1 = s1 / (xp.linalg.norm(s1) + 1e-8)
+    s2 = s2 / (xp.linalg.norm(s2) + 1e-8)
     strength_similarity = xp.dot(s1, s2)
 
     # 返回联合相似度（乘起来）

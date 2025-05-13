@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from ARPDF import compare_ARPDF, get_atoms_pos
 import utils
 from utils import calc_AFF, update_metadata
-from utils.core_functions import get_circular_weight, weighted_similarity, cosine_similarity
+from utils.core_functions import get_circular_weight, weighted_similarity, cosine_similarity, weighted_similarity_scale
 from utils.core_functions_torch import generate_gaussian_kernel, gaussian_filter, get_abel_trans_mat, generate_field, toTensor, GND
 from tqdm import tqdm
 
@@ -204,7 +204,8 @@ class ARPDFOptimizer:
     def _get_loss_func(self, loss_name: str) -> Callable[[torch.Tensor], torch.Tensor]:
         loss_func_map = {
             "cosine": self._loss_cosine,
-            "circular": self._loss_circular
+            "circular": self._loss_circular,
+            "circular_scale":self._loss_circular_scale
         }
         return loss_func_map[loss_name.strip().lower()]
 
@@ -213,6 +214,9 @@ class ARPDFOptimizer:
 
     def _loss_circular(self, ARPDF_pred):
         return -torch.vdot(self.r_weight, weighted_similarity(self.circular_weights, ARPDF_pred, self.ARPDF_exp))
+    
+    def _loss_circular_scale(self, ARPDF_pred):
+        return -torch.vdot(self.r_weight, weighted_similarity_scale(self.circular_weights, ARPDF_pred, self.ARPDF_exp))
 
     def _normalization(self, delta_pos):
         return torch.sum(delta_pos**2, dim=1).mean()

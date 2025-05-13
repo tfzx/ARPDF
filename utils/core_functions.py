@@ -1,7 +1,6 @@
 import sys
 import numpy as np
-import scipy.special as special
-from typing import TypeVar, Optional, Tuple
+from typing import TypeVar
 import abel
 
 ArrayType = TypeVar("ArrayType", np.ndarray, "cupy.ndarray") # type: ignore
@@ -74,155 +73,6 @@ def abel_inversion_rbasex(image: ArrayType) -> ArrayType:
 def abel_inversion(image: ArrayType) -> ArrayType:
     return abel_inversion_rbasex(image)
 
-
-def cosine_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, weight: Optional[ArrayType] = None) -> float:
-    """
-    Compute the cosine similarity between two ARPDF.
-    """
-    xp = get_array_module(ARPDF1)
-    if weight is None:
-        weight = xp.ones_like(ARPDF1)
-    return weighted_similarity(weight[None, :, :], ARPDF1, ARPDF2).squeeze(0)
-
-def weighted_similarity(weights, image1, image2):
-    xp = get_array_module(image1)
-    def inner(w, x1, x2):
-        return xp.einsum("ijk,jk,jk->i", w, x1, x2)
-    C = 0.005
-    def weighted_sim(w, x, y):
-        return (inner(w, x, y) / (xp.sqrt(inner(w, x, x)) + 1e-8) + C) / (xp.sqrt(inner(w, y, y)) + C)
-    return weighted_sim(weights, image1, image2)
-
-def weighted_similarity_scale(weights, image1, image2):
-    xp = get_array_module(image1)
-    
-    def inner(w, x1, x2):
-        return xp.einsum("ijk,jk,jk->i", w, x1, x2)
-    
-    C = 0.005
-
-    def weighted_sim(w, x, y):
-        sim = (inner(w, x, y) / (xp.sqrt(inner(w, x, x)) + 1e-8) + C) / (xp.sqrt(inner(w, y, y)) + C)
-        return sim
-    weighted = weighted_sim(weights, image1, image2)
-
-    # strength pattern similarity（每圈强度的比例）
-    def get_strength(img):
-        # weights: (n, h, w), img: (h, w)
-        squared = img**2  # (h, w)
-        weighted_sum = xp.einsum("ijk,jk->i", weights, squared) 
-        return xp.sqrt(weighted_sum + 1e-8)
-    
-    s1 = get_strength(image1)
-    s2 = get_strength(image2)
-    
-    s1 = s1 / (xp.linalg.norm(s1) + 1e-8)
-    s2 = s2 / (xp.linalg.norm(s2) + 1e-8)
-    strength_similarity = xp.dot(s1, s2)
-
-    # 返回联合相似度（乘起来）
-    return (weighted * strength_similarity)
-    
-
-def get_circular_weight(R_grids, r0, sigma):
-    """ Get the 2D Rice ditribution at radius r0 with sigma """
-    xp = get_array_module(R_grids)
-    _r0 = xp.asarray(r0)
-    _R = R_grids.reshape((1,) * r0.ndim + R_grids.shape)
-    _r0 = _r0.reshape(_r0.shape + (1,) * R_grids.ndim)
-    # !Note: Don't use cupyx.scipy.special.i0e, because it's instable for large values (may lead to nan)
-    _i0e = special.i0e if xp.__name__ == "numpy" else lambda x: to_cupy(special.i0e(to_numpy(x)))
-    return xp.exp(-(_R-_r0)**2/(2*sigma**2)) * _i0e(_r0*_R/sigma)
-
-def oneD_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, axis: int = 0, weight: Optional[ArrayType] = None) -> float:
-    """
-    Compute cosine similarity along a central 1D axis of two ARPDFs.
-    
-    Args:
-        ARPDF1: First ARPDF 2D array.
-        ARPDF2: Second ARPDF 2D array.
-        axis: Which axis to slice along (0 for y-axis/mid-column, 1 for x-axis/mid-row).
-        weight: Optional weight for each pixel in the 1D line.
-        
-    Returns:
-        Cosine similarity between the selected 1D lines of ARPDF1 and ARPDF2.
-    """
-
-    xp = get_array_module(ARPDF1)
-
-    if weight is not None:
-        ARPDF1 = ARPDF1 * weight
-        ARPDF2 = ARPDF2 * weight
-
-    if axis == 0:
-        center_idx = ARPDF1.shape[1] // 2
-        line1 = ARPDF1[:, center_idx]
-        line2 = ARPDF2[:, center_idx]
-    else:
-        center_idx = ARPDF1.shape[0] // 2
-        line1 = ARPDF1[center_idx, :]
-        line2 = ARPDF2[center_idx, :]
-
-    dot = xp.sum(line1 * line2)
-    norm1 = xp.sqrt(xp.sum(line1 * line1)) + 1e-8
-    norm2 = xp.sqrt(xp.sum(line2 * line2)) + 1e-8
-    similarity = dot / (norm1 * norm2)
-
-    return similarity
-
-def angular_average_similarity(
-    ARPDF1: ArrayType,
-    ARPDF2: ArrayType,
-    angle_range=(np.pi/4, 3*np.pi/4),
-    weight: Optional[ArrayType] = None,
-    bin_width: float = 0.1
-) -> float:
-    xp = get_array_module(ARPDF1)
-    assert ARPDF1.shape == ARPDF2.shape, "ARPDF1 and ARPDF2 must have same shape"
-    H, W = ARPDF1.shape
-    cx, cy = W // 2, H // 2
-
-    # Coordinate grid
-    x = xp.arange(W) - cx
-    y = xp.arange(H) - cy
-    X, Y = xp.meshgrid(x, y)
-    R = xp.sqrt(X**2 + Y**2)
-    Theta = xp.arctan2(Y, X)
-
-    # Angular mask
-    theta_min, theta_max = angle_range
-    mask = (Theta >= theta_min) & (Theta <= theta_max)
-
-    # Radial bin index per pixel
-    R_flat = R[mask]
-    ARPDF1_flat = ARPDF1[mask]
-    ARPDF2_flat = ARPDF2[mask]
-    bin_indices = xp.floor(R_flat / bin_width).astype(int)
-
-    if weight is not None:
-        weight_flat = weight[mask]
-        w1 = weight_flat * ARPDF1_flat
-        w2 = weight_flat * ARPDF2_flat
-        sum_w = xp.bincount(bin_indices, weights=weight_flat)
-        sum_w1 = xp.bincount(bin_indices, weights=w1)
-        sum_w2 = xp.bincount(bin_indices, weights=w2)
-        profile1 = sum_w1 / (sum_w + 1e-8)
-        profile2 = sum_w2 / (sum_w + 1e-8)
-        final_weight = sum_w
-    else:
-        profile1 = xp.bincount(bin_indices, weights=ARPDF1_flat)
-        profile2 = xp.bincount(bin_indices, weights=ARPDF2_flat)
-        counts = xp.bincount(bin_indices)
-        profile1 /= (counts + 1e-8)
-        profile2 /= (counts + 1e-8)
-        final_weight = counts
-
-    # Cosine similarity
-    dot = xp.sum(profile1 * profile2)
-    norm1 = xp.sqrt(xp.sum(profile1**2)) + 1e-8
-    norm2 = xp.sqrt(xp.sum(profile2**2)) + 1e-8
-    similarity = dot / (norm1 * norm2)
-    return similarity
 
 
 
@@ -385,9 +235,6 @@ if __name__ == "__main__":
     res_cp = abel_inversion(image_cp)
     assert get_array_module(res_np) is np
     assert get_array_module(res_cp) is cp
-    # Test cosine_similarity
-    cosine_similarity(res_np, res_np)
-    cosine_similarity(res_cp, res_cp)
     arr_np = np.arange(3)
     arr_cp = cp.arange(3, 6)
     print(to_cupy(arr_np))

@@ -6,9 +6,9 @@ import MDAnalysis as mda
 import MDAnalysis.analysis.distances as mda_dist
 from scipy.ndimage import gaussian_filter as gaussian_filter_np
 from utils import box_shift, generate_grids, calc_AFF, show_images
-from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, cosine_similarity, generate_field
+from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, generate_field
+from utils.similarity import cosine_similarity
 from types import ModuleType
-import abel
 
 def compute_all_atom_pairs(
         universe: mda.Universe, 
@@ -307,15 +307,18 @@ def compute_ARPDF(
 
     return ARPDF if input_type == "cupy" else to_numpy(ARPDF)
 
-def compare_ARPDF(ARPDF, ARPDF_exp, grids_XY, cos_sim = None, show_range = 8.0):
-    if cos_sim is None:
-        cos_sim = cosine_similarity(ARPDF, ARPDF_exp)
+def compare_ARPDF(ARPDF, ARPDF_ref, grids_XY, sim_name = "Sim", sim_value = None, show_range = 8.0, weight_cutoff = 5.0):
+    if sim_value is None:
+        sim_value = cosine_similarity(ARPDF, ARPDF_ref)
     X, Y = grids_XY
-    h = X[1, 1] - X[0, 0]
-    ARPDF /= np.linalg.norm(ARPDF) * h**2 + 1e-3
-    ARPDF_exp /= np.linalg.norm(ARPDF_exp) * h**2 + 1e-3
+    hx = X[1, 1] - X[0, 0]
+    hy = Y[1, 1] - Y[0, 0]
+    R = np.sqrt(X**2 + Y**2)
+    ARPDF /= ARPDF[R < weight_cutoff + 0.5].max() + 0.01
+    ARPDF_ref /= ARPDF_ref[R < weight_cutoff + 0.5].max() + 0.01
+    vmax = 1
     xmin, xmax = X.min(), X.max()
     ymin, ymax = Y.min(), Y.max()
-    return show_images({f"ARPDF (Sim: {cos_sim:0.2f})": ARPDF, "ARPDF (Experimental)": ARPDF_exp}.items(), 
-                      plot_range=[xmin, xmax, ymin, ymax], show_range=show_range, c_range=1.5,
+    return show_images({f"ARPDF ({sim_name}: {sim_value:0.2f})": ARPDF, "ARPDF (Reference)": ARPDF_ref}.items(), 
+                      plot_range=[xmin, xmax, ymin, ymax], show_range=show_range, c_range=vmax,
                         cmap="bwr", colorbar="align")

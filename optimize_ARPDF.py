@@ -156,8 +156,8 @@ class ARPDFOptimizer:
             u1: Optional[mda.Universe] = None, 
             u2: Optional[mda.Universe] = None, 
             optimized_atoms: Optional[List[int]] = None,
+            polar_axis = None,
             norm_func: Callable[[Tensor], Tensor] | None=None,
-            polar_axis = None
         ):
         if any(x is None for x in (u1, optimized_atoms, polar_axis)):
             u1, u2, optimized_atoms, polar_axis = utils.load_structure_data(out_dir)
@@ -166,7 +166,7 @@ class ARPDFOptimizer:
         self.modified_atoms = optimized_atoms
         self.polar_axis = polar_axis
         if norm_func is None:
-            self.norm_func: Callable[[Tensor], Tensor] = lambda sel_pos: 0.0
+            self.norm_func: Callable[[Tensor], Tensor] = lambda sel_pos: torch.as_tensor(0.0)
         else:
             self.norm_func = norm_func
         selected_pos1, around_pos1, center_masses, atom_pairs = get_atoms_pos(u1, optimized_atoms, cutoff=self.cutoff + 2.0, periodic=True)

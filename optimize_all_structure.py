@@ -45,7 +45,7 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
     # Initialize the optimizer
     optimizer = ARPDFOptimizer(
         X, Y,
-        ARPDF_exp=ARPDF_ref,
+        ARPDF_ref=ARPDF_ref,
         type_counts=Counter(u1_ref.atoms.types),
         cutoff=cutoff,
         sigma0=sigma0,
@@ -92,7 +92,7 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
             out_dir=struct_dir,
             u1=u1_ref,
             u2=result.modified_universe,
-            modified_atoms=optimized_atoms,
+            optimized_atoms=optimized_atoms,
             polar_axis=result.polar_axis
         )
 

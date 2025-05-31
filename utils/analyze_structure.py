@@ -14,6 +14,7 @@ class StructureAnalysisResult:
     dist_C_A_C_B: float  # Distance between two C atoms
     theta_CL_A_CL_B: float  # Angle between CL-CL vector and target axis (in degrees)
     umbrella_angle: float # Angle of CCl3 cylinder
+    dists_CL_A_to_others: List[float] #Distance between CL_A and other CL
 
 def select_ccl4_molecules(
         u: mda.Universe,
@@ -204,14 +205,18 @@ def analyze_ccl4_structure(
     normal_vector = np.cross(v1, v2)
     normal_vector /= np.linalg.norm(normal_vector)  # 单位化
 
-    # 计算C到参考Cl的向量
-    vec_C_to_CL = CL_A - C_A
+    # 选其中一个 Cl（例如 other_CLs[0]）作为参考 Cl
+    selected_cl = other_CLs[0]
+    vec_C_to_CL = selected_cl - C_A
     vec_C_to_CL /= np.linalg.norm(vec_C_to_CL)  # 单位化
 
-    # 计算伞角（umbrella angle）
+    # 计算夹角
     cos_angle = np.clip(np.dot(vec_C_to_CL, normal_vector), -1.0, 1.0)
     umbrella_angle = np.arccos(cos_angle)  # radians
     umbrella_angle = np.degrees(umbrella_angle)  # degrees
+
+    dists_CL_A_to_others = [calc_dist(CL_A, cl) for cl in other_CLs]
+    #dist_CL_A_CL_other = np.mean(dists_CL_A_to_others)
 
     
     # Return results
@@ -221,6 +226,7 @@ def analyze_ccl4_structure(
         dist_C_B_CL_B=dist_C_B_CL_B,
         dist_C_A_C_B=dist_C_A_C_B,
         theta_CL_A_CL_B=np.degrees(theta_CL_A_CL_B),
-        umbrella_angle=umbrella_angle
+        umbrella_angle=umbrella_angle,
+        dists_CL_A_to_others=dists_CL_A_to_others
     )
 

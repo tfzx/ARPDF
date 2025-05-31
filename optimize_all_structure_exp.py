@@ -8,7 +8,7 @@ import torch
 from tqdm import tqdm
 from optimize_ARPDF import ARPDFOptimizer
 from search_boxes import SearchResult
-from utils import load_structure_data, generate_grids, update_metadata, select_nbr_mols
+from utils import load_structure_data, generate_grids, update_metadata, select_nbr_mols, load_exp_data
 from utils.analyze_structure import select_ccl4_molecules
 import json
 
@@ -31,7 +31,7 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
     # Load reference structure and metadata
     reference_dir = "data/CCl4"
     u1_ref, u2_ref, modified_atoms_ref, polar_axis_ref = load_structure_data(reference_dir)
-    ARPDF_ref = np.load(os.path.join(exp_dir, "ARPDF_ref.npy"))
+    X, Y, ARPDF_ref = load_exp_data('data/CCl4', rmax=9.0)
     with open(os.path.join(exp_dir, "metadata.json"), "r") as f:
         root_metadata = json.load(f)
     xy_range = root_metadata["search_info"]["parameters"]["grids_range"]
@@ -104,5 +104,5 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
 
 # Example usage
 if __name__ == "__main__":
-    exp_dir = "tmp/exp_angular_scale_3nm_flat_cutoff_5"  # Adjust based on your directory
+    exp_dir = "tmp/exp_experiment_precise_angular_scale_3nm_cutoff_5"  # Adjust based on your directory
     optimize_all_structures(exp_dir)

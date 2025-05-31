@@ -119,6 +119,101 @@ def adjust_ccl(c_atom, cl_target, stretch_distance=0.2, modified_atoms=None, box
     # 更新原子位置
     cl_target.position = new_cl_pos
 
+def rotate_CH3CN_along_CN(mol_atoms, phi_deg=0, theta_deg=0, modified_atoms=None, box=None):
+    """
+    将乙腈分子绕 CN 方向进行旋转，考虑周期性边界条件。
+    
+    参数：
+    - mol_atoms: 乙腈分子的原子集合 (MDAnalysis AtomGroup)
+    - phi_deg: 绕 CN 轴的旋转角度（单位：度，右手法则）
+    - theta_deg: 绕垂直于 CN 的轴的旋转角度（单位：度）
+    - modified_atoms: 若提供，将记录所有被修改坐标的原子编号（index）
+    - box: 周期性边界条件的盒子尺寸 (None 表示不考虑 PBC)
+    """
+    # 选出C与N原子
+    c_atom = mol_atoms.select_atoms("name C")[0]
+    n_atom = mol_atoms.select_atoms("name N")[0]
+    
+    # 几何中心为旋转中心
+    center = mol_atoms.center_of_geometry()
+
+    # 构造 CN 方向向量（单位化），考虑 PBC
+    cn_vec = n_atom.position - c_atom.position
+    if box is not None:
+        cn_vec = box_shift(cn_vec, box)
+    z_axis = cn_vec / np.linalg.norm(cn_vec)  # 新的 Z 轴
+
+    # 构造垂直于 z 的其他轴：新 x、y
+    arbitrary = np.array([1.0, 0.0, 0.0]) if abs(np.dot(z_axis, [1, 0, 0])) < 0.99 else np.array([0.0, 1.0, 0.0])
+    x_axis = np.cross(arbitrary, z_axis)
+    x_axis /= np.linalg.norm(x_axis)
+    y_axis = np.cross(z_axis, x_axis)
+
+    # 坐标系变换矩阵：世界 -> 分子局部坐标系
+    R_world_to_local = np.stack([x_axis, y_axis, z_axis], axis=1)  # shape (3,3)
+
+    # 构造绕 z（CN方向）的旋转
+    phi = np.radians(phi_deg)
+    Rz = np.array([
+        [np.cos(phi), -np.sin(phi), 0],
+        [np.sin(phi),  np.cos(phi), 0],
+        [0, 0, 1]
+    ])
+
+    # 构造绕 x 的旋转（theta）
+    theta = np.radians(theta_deg)
+    Rx = np.array([
+        [1, 0, 0],
+        [0, np.cos(theta), -np.sin(theta)],
+        [0, np.sin(theta),  np.cos(theta)]
+    ])
+
+    # 总旋转（在局部坐标系下）
+    R_local = Rx @ Rz
+
+    # 变换回世界坐标系
+    R_total = R_world_to_local @ R_local @ R_world_to_local.T
+
+    # 执行旋转（原子绕几何中心）
+    for atom in mol_atoms:
+        shift = atom.position - center
+        new_pos = R_total @ shift + center
+        atom.position = new_pos
+        if modified_atoms is not None:
+            modified_atoms.append(atom.index)
+
+def adjust_ccn(ch3_c_atom, cn_c_atom, n_atom, stretch_distance=0.2, modified_atoms=None, box=None):
+    """
+    沿 CH3–C 到 C≡N 的方向，整体平移 CN 基团，使得 C–C 距离增加 stretch_distance。
+
+    参数：
+    - ch3_c_atom: CH3 端的 C 原子 (MDAnalysis Atom)
+    - cn_c_atom: CN 基团的 C 原子 (MDAnalysis Atom)
+    - n_atom: N 原子 (MDAnalysis Atom)
+    - stretch_distance: C–C 延长的距离（单位 Å）
+    - modified_atoms: 可选，用于记录被修改的原子索引列表
+    - box: 周期性边界条件盒子维度 (可选)
+
+    返回：
+    - None（原地修改 cn_c_atom 和 n_atom 的位置）
+    """
+    # 计算 C–C 方向向量
+    cc_vector = cn_c_atom.position - ch3_c_atom.position
+
+    if box is not None:
+        cc_vector = box_shift(cc_vector, box)
+
+    cc_unit = cc_vector / np.linalg.norm(cc_vector)
+
+    # 整体平移 CN 基团
+    cn_c_atom.position += cc_unit * stretch_distance
+    n_atom.position     += cc_unit * stretch_distance
+
+    # 记录被修改的原子
+    if modified_atoms is not None:
+        modified_atoms.extend([cn_c_atom.index, n_atom.index])
+
+
 import MDAnalysis as mda
 import re
 

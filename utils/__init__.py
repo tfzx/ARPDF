@@ -13,7 +13,7 @@ from utils.utils import (
     update_metadata
 )
 from utils.AFF_map import calc_AFF
-from utils.box_modify import adjust_ccl3_structure, adjust_ccl, compute_axis_direction, clean_gro_box
+from utils.box_modify import adjust_ccl3_structure, adjust_ccl, compute_axis_direction, clean_gro_box, rotate_CH3CN_along_CN, adjust_ccn
 from utils.analyze_structure import analyze_ccl4_structure, StructureAnalysisResult, select_ccl4_molecules, select_nearest_ccl4_molecules, rotate_ccl4_molecules
 
 __all__ = [
@@ -38,5 +38,7 @@ __all__ = [
     'select_ccl4_molecules',
     'select_nearest_ccl4_molecules',
     'rotate_ccl4_molecules',
-    'update_metadata'
+    'update_metadata',
+    'rotate_CH3CN_along_CN',
+    'adjust_ccn'
 ]

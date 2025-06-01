@@ -1,0 +1,14 @@
+{
+    "name": "CH3CN",
+    "structure_info": {
+        "u1_name": "CH3CN_no_H.gro",
+        "u2_name": "CH3CN_no_H_modified.gro",
+        "polar_axis": [0.17741619,0.46127903,0.869336],
+        "modified_atoms": [721,722,723]
+    },
+    "expdata_info": {
+        "expdata_name": "ARPDF_exp.npy",
+        "xy_range": 9.924650203173275
+    }
+
+}

@@ -140,30 +140,31 @@ def generate_field(
 
 
 class GND():
-    def __init__(self, optimizer: optim.Optimizer, s=0.1, f_lb=0.0):
+    def __init__(self, optimizer: optim.Optimizer, s=0.1, f_lb=0.0, gamma=0.999):
         self.optimizer = optimizer
         self.s = s
         self.f_lb = f_lb
         self.f_min = np.inf
+        self.gamma = gamma
 
     @torch.no_grad()  # 确保不会计算梯度
-    def step(self, loss):
+    def step(self, f_val: torch.Tensor):
         """
         Performs the noise step.
         """
-        if isinstance(loss, torch.Tensor):
-            loss = loss.item()
-        else:
-            loss = float(loss)
-        self.f_min = min(self.f_min, loss)
+        f_val = f_val.item()
+        f_min = min(self.f_min, f_val)
+        f_lb = self.f_lb
+        sigma_1 = np.sqrt(self.s * np.clip(f_val - f_lb, 0.0, None))
         for group in self.optimizer.param_groups:
             lr = group["lr"]
-            sigma = np.sqrt(lr * self.s * np.clip(loss - self.f_lb, 0.0, None))
+            sigma = np.sqrt(lr) * sigma_1
 
             for param in group["params"]:
                 d_p = torch.randn_like(param) * sigma / np.sqrt(param.numel())
 
                 # 更新参数
                 param.data.add_(d_p)
-        self.f_lb += max(self.f_min - self.f_lb, 0.0) * 0.001
-        return loss
+        self.f_lb = min(f_lb * self.gamma + f_min * (1 - self.gamma), f_min)
+        self.f_min = f_min
+        return f_val

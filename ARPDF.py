@@ -209,7 +209,7 @@ def forward_transform(
 def compute_ARPDF(
     u1: mda.Universe,
     u2: mda.Universe,
-    N: int = 512,
+    N: int | None = 512,
     cutoff: float = 10.0,
     sigma0=0.4,
     grids_XY: Optional[Tuple[ArrayType, ArrayType]] = None,

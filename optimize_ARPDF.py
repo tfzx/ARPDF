@@ -122,7 +122,8 @@ class ARPDFOptimizer:
             sigma0=0.4,
             weight_cutoff=6.0,
             lr=0.01, 
-            gamma=0.995,
+            gamma_lr=0.995,
+            gamma_noise=0.999,
             f_lb=0.0, 
             s=0.1, 
             beta=0.1, 
@@ -141,7 +142,8 @@ class ARPDFOptimizer:
         self.sigma0 = sigma0
         self.f_lb = f_lb
         self.lr = lr
-        self.gamma = gamma
+        self.gamma_lr = gamma_lr
+        self.gamma_noise = gamma_noise
         self.s = s
         self.beta = beta
         self.epochs = epochs
@@ -186,8 +188,8 @@ class ARPDFOptimizer:
         self.num_atoms = selected_pos1.shape[0]
         self._params = torch.zeros((self.num_atoms, 3), dtype=torch.float32, device=self.device, requires_grad=True)
         self.optimizer = optim.Adam([self._params], lr=self.lr)
-        self.noise_scheduler = GND(self.optimizer, s=self.s, f_lb=self.f_lb)
-        self.lr_scheduler = ExponentialLR(self.optimizer, gamma=self.gamma)
+        self.noise_scheduler = GND(self.optimizer, s=self.s, f_lb=self.f_lb, gamma=self.gamma_noise)
+        self.lr_scheduler = ExponentialLR(self.optimizer, gamma=self.gamma_lr)
 
     def to(self, *args, **kwargs):
         self.__dict__.update(toTensor(self.__dict__, *args, **kwargs))
@@ -254,8 +256,9 @@ class ARPDFOptimizer:
 
             if self.s > 0:
                 with torch.no_grad():
-                    ARPDF_tmp = self.model(self._get_selected_pos()) - self.image1
-                    loss_tmp = self._loss_func(ARPDF_tmp)
+                    sel_pos2_tmp = self._get_selected_pos()
+                    ARPDF_tmp = self.model(sel_pos2_tmp) - self.image1
+                    loss_tmp = self._loss_func(ARPDF_tmp) + self.beta * self.norm_func(sel_pos2_tmp)
                     self.noise_scheduler.step(loss_tmp)
 
             self.lr_scheduler.step()
@@ -264,6 +267,7 @@ class ARPDFOptimizer:
                 lr = self.lr_scheduler.get_last_lr()[0]
                 if verbose and epoch % print_step == 0:
                     tqdm.write(f"Epoch {epoch}: Loss={loss.item():.6f}, Norm={normalization.item():.6f}, LR={lr:.6f}")
+                    tqdm.write(f"f_min={self.noise_scheduler.f_min:.6f}, f_lb={self.noise_scheduler.f_lb:.6f}")
                 log["epoch"].append(epoch)
                 log["lr"].append(lr)
                 log["loss"].append(loss.item())
@@ -303,7 +307,8 @@ class ARPDFOptimizer:
                     "sigma0": self.sigma0,
                     "weight_cutoff": self.weight_cutoff,
                     "lr": self.lr,
-                    "gamma": self.gamma,
+                    "gamma_lr": self.gamma_lr,
+                    "gamma_noise": self.gamma_noise,
                     "f_lb": self.f_lb,
                     "s": self.s,
                     "beta": self.beta,

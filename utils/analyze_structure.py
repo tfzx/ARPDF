@@ -205,10 +205,18 @@ def analyze_ccl4_structure(
     normal_vector = np.cross(v1, v2)
     normal_vector /= np.linalg.norm(normal_vector)  # 单位化
 
-    # 选其中一个 Cl（例如 other_CLs[0]）作为参考 Cl
+    # 选其中一个 Cl_A作为参考 Cl
+    # 计算 C 到 CL_A 的单位向量
+    vec_C_A_to_CL_A = CL_A - C_A
+    vec_C_A_to_CL_A /= np.linalg.norm(vec_C_A_to_CL_A)
+
     selected_cl = other_CLs[0]
     vec_C_to_CL = selected_cl - C_A
     vec_C_to_CL /= np.linalg.norm(vec_C_to_CL)  # 单位化
+
+    # 修正法向量方向：确保它朝向 Cl_A
+    if np.dot(normal_vector, vec_C_A_to_CL_A) < 0:
+        normal_vector = -normal_vector
 
     # 计算夹角
     cos_angle = np.clip(np.dot(vec_C_to_CL, normal_vector), -1.0, 1.0)

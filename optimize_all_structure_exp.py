@@ -38,6 +38,7 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
     N, M = root_metadata["search_info"]["parameters"]["grids_shape"]
     X, Y = generate_grids(xy_range, N, M)
     cutoff = 10.0
+    filter_fourier = lambda kX, kY, xp: (1 - xp.exp(-(kX**2  + 2*kY**2 )/ 0.025))
     sigma0 = root_metadata["search_info"]["parameters"]["sigma0"]
     weight_cutoff = root_metadata["search_info"]["parameters"]["weight_cutoff"]
     device = 'cuda'
@@ -45,13 +46,14 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
     # Initialize the optimizer
     optimizer = ARPDFOptimizer(
         X, Y,
-        ARPDF_exp=ARPDF_ref,
+        ARPDF_ref=ARPDF_ref,
         type_counts=Counter(u1_ref.atoms.types),
+        filter_fourier=filter_fourier,
         cutoff=cutoff,
         sigma0=sigma0,
         weight_cutoff=weight_cutoff,
         lr=0.01,
-        gamma=0.995,
+        gamma_lr=0.995,
         f_lb=-0.9, 
         s=0.0, 
         beta=0.0, 
@@ -92,7 +94,7 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
             out_dir=struct_dir,
             u1=u1_ref,
             u2=result.modified_universe,
-            modified_atoms=optimized_atoms,
+            optimized_atoms=optimized_atoms,
             polar_axis=result.polar_axis
         )
 
@@ -104,5 +106,5 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
 
 # Example usage
 if __name__ == "__main__":
-    exp_dir = "tmp/exp_experiment_precise_angular_scale_3nm_cutoff_5"  # Adjust based on your directory
+    exp_dir = "tmp/exp_experiment_realprecise1_angular_scale_3nm_cutoff_5"  # Adjust based on your directory
     optimize_all_structures(exp_dir)

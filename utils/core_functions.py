@@ -2,8 +2,25 @@ import sys
 import numpy as np
 from typing import TypeVar
 import abel
+from scipy.special import i0, i0e
 
 ArrayType = TypeVar("ArrayType", np.ndarray, "cupy.ndarray") # type: ignore
+
+def compute_rice_weights(R_grid, r_vals, sigma):
+    """
+    预计算 Rice 分布权重矩阵，输出 shape = (grid_size, num_atoms)
+    """
+    R_grid = np.asarray(R_grid).reshape(-1)      # shape = (grid_size,)
+    r_vals = np.asarray(r_vals).reshape(-1)      # shape = (num_atoms,)
+    
+    R = R_grid[:, None]                          # shape = (grid_size, 1)
+    r = r_vals[None, :]                          # shape = (1, num_atoms)
+
+    delta_R = (R - r)**2
+    I0_term = i0(R * r / sigma**2)
+    weights = np.exp(-delta_R / (2 * sigma**2)) * I0_term
+
+    return weights.astype(np.float32).reshape(-1)  # flatten 后传给 CUDA
 
 def get_array_module(x):
     module_name = x.__class__.__module__.split('.')[0]
@@ -218,6 +235,119 @@ def generate_field(X: ArrayType, Y: ArrayType, r_vals: ArrayType, theta_vals: Ar
         return generate_field_cuda(X, Y, r_vals, theta_vals, delta)
     else:
         raise ValueError(f"Unsupported array type: {xp.__name__}")
+
+
+_generate_field_polar_C = r'''
+extern "C" __global__
+void generate_field_polar_kernel(float* R_grid, float* Phi_grid, float* r_vals, float* theta_vals,
+                                 float* weights, float* output,
+                                 int num_atoms, int grid_size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= grid_size) return;
+
+    float R = R_grid[idx];
+    float phi = Phi_grid[idx];
+
+    float sum_field = 0.0f;
+
+    for (int i = 0; i < num_atoms; i++) {
+        float r = r_vals[i];                   
+        float theta = theta_vals[i];
+        float weight = weights[idx * num_atoms + i]; 
+
+        float C = 0.5f * (3.0f * cosf(theta) * cosf(theta) - 1.0f);
+        float phi_term = 0.5f * (3.0f * cosf(phi) * cosf(phi) - 1.0f);
+
+        sum_field += weight * (1.0f + 2.0f * C * phi_term) * r;
+    }
+
+    output[idx] = sum_field;
+}
+'''
+
+
+
+
+def generate_field_polar_cuda(R, Phi, r_vals, theta_vals, delta):
+    import cupy as cp
+    global generate_field_polar_kernel
+    if 'generate_field_polar_kernel' not in globals():
+        generate_field_polar_kernel = cp.RawKernel(_generate_field_polar_C, 'generate_field_polar_kernel')
+
+    R = cp.array(R, dtype=cp.float32)
+    Phi = cp.array(Phi, dtype=cp.float32)
+    r_vals = cp.array(r_vals, dtype=cp.float32)
+    theta_vals = cp.array(theta_vals, dtype=cp.float32)
+
+    import numpy as np
+    from scipy.special import i0e
+    R_np = R.get().reshape(-1, 1)  # (grid_size, 1)
+    r_np = r_vals.get().reshape(1, -1)  # (1, num_atoms)
+
+    delta = float(delta) 
+
+    weights_np = np.exp(- (R_np - r_np)**2 / (2 * delta**2)) * i0e(R_np * r_np / (delta))
+    weights_np = weights_np.astype(np.float32).ravel()
+    weights = cp.array(weights_np)
+
+    output = cp.zeros_like(R, dtype=cp.float32)
+    grid_size = R.size
+    num_atoms = r_vals.size
+
+    threads_per_block = 256
+    blocks_per_grid = (grid_size + threads_per_block - 1) // threads_per_block
+
+
+    generate_field_polar_kernel(
+        (blocks_per_grid,), (threads_per_block,),
+        (R, Phi, r_vals, theta_vals, weights, output, num_atoms, grid_size)
+    )
+
+    return output
+
+
+def generate_field_polar_numpy(
+        R: np.ndarray,
+        Phi: np.ndarray,
+        r_vals: np.ndarray,
+        theta_vals: np.ndarray,
+        delta: float = 0.01,
+        batch_size: int = 128
+    ) -> np.ndarray:
+    """
+    Generate field on a polar grid without smoothing function.
+    """
+    final_field = np.zeros_like(R)
+    num_atoms = r_vals.shape[0]
+
+    r_batches = np.split(r_vals, range(batch_size, num_atoms, batch_size), axis=0)
+    theta_batches = np.split(theta_vals, range(batch_size, num_atoms, batch_size), axis=0)
+
+    R_view = R.reshape(1, -1)
+    Phi_view = Phi.reshape(1, -1)
+
+    EPS = 1e-10
+    for r, theta in zip(r_batches, theta_batches):
+        r = r.reshape(-1, 1)
+        theta = theta.reshape(-1, 1)
+        angle_diff = theta - Phi_view
+        C = 0.5 * (3 * np.cos(angle_diff)**2 - 1)
+
+        contribution = ((1 + C) / np.clip(r, EPS, None)).sum(axis=0)
+        final_field += contribution.reshape(R.shape)
+
+    return final_field
+
+
+def generate_field_polar(R: ArrayType, Phi: ArrayType, r_vals: ArrayType, theta_vals: ArrayType, delta: np.float32) -> ArrayType:
+    xp = get_array_module(R)
+    if xp.__name__ == "numpy":
+        return generate_field_polar_numpy(R, Phi, r_vals, theta_vals, delta)
+    elif xp.__name__ == "cupy":
+        return generate_field_polar_cuda(R, Phi, r_vals, theta_vals, delta)
+    else:
+        raise ValueError(f"Unsupported array type: {xp.__name__}")
+
 
 
 if __name__ == "__main__":

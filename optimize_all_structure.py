@@ -124,3 +124,4 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
 if __name__ == "__main__":
     exp_dir = "tmp/exp_angular_scale_3nm_flat_cutoff_5"  # Adjust based on your directory
     optimize_all_structures(exp_dir)
+    print("All structures optimized successfully.")

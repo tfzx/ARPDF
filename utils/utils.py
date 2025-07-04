@@ -73,6 +73,40 @@ def generate_grids(xy_range, N: int = 512, M: Optional[int] = None) -> Tuple[np.
     y = np.linspace(ymin, ymax, M, dtype=np.float32)
     return np.meshgrid(x, y)
 
+def generate_grids_polar(
+    r_range: Tuple[float, float] = (0.0, 10.0),
+    theta_range: Tuple[float, float] = (0.0, 2 * np.pi),
+    Nr: int = 512,
+    Ntheta: int = 512
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Generate polar coordinate grids (R, Phi) for use in radial projection.
+
+    Parameters
+    ----------
+    r_range : (rmin, rmax)
+        Radial distance range (in Å).
+    theta_range : (theta_min, theta_max)
+        Angular range (in radians).
+    Nr : int
+        Number of radial bins.
+    Ntheta : int
+        Number of angular bins.
+
+    Returns
+    -------
+    R, Phi : np.ndarray, np.ndarray
+        2D meshgrids in polar coordinates.
+    """
+    rmin, rmax = r_range
+    tmin, tmax = theta_range
+
+    r_vals = np.linspace(rmin, rmax, Nr, dtype=np.float32)
+    theta_vals = np.linspace(tmin, tmax, Ntheta, dtype=np.float32)
+
+    return np.meshgrid(r_vals, theta_vals, indexing="ij")
+
+
 def resize_ARPDF(ARPDF_exp, original_grids, grid_size = None):
     raise NotImplementedError("Not implemented yet")
 
@@ -212,6 +246,80 @@ def show_images(
                 fig.colorbar(img, ax=axs[i], label=None if i < N else clabel) # Attach colorbar to all images
     elif colorbar != "none":
         fig.colorbar(img, ax=axs[0], label=clabel)
+    return fig
+
+def show_images_polar(
+                images: Iterable[Tuple[Any, np.ndarray]], 
+        r_range: Tuple[float, float] = (0.0, 1.0),
+        phi_range: Tuple[float, float] = (0.0, 2 * np.pi),
+        c_range: Optional[Tuple[float, float]] = None,
+        colorbar: str = "last",
+        cmap: str = 'inferno', 
+        title = None, 
+        clabel: str = "Intensity",
+        **kwargs
+    ):
+    """
+    Visualize multiple images with R (radius) as x-axis and phi (angle) as y-axis.
+
+    Parameters:
+        images     : Iterable of (title, image) tuples to plot
+        r_range    : Tuple for radial range (min, max) along x-axis
+        phi_range  : Tuple for angular range (min, max) along y-axis
+        c_range    : Tuple or list of (vmin, vmax) for color scale, or None
+        colorbar   : "last", "all", "none", or "align"
+        cmap       : Colormap
+        title      : Title or function of key
+        clabel     : Colorbar label
+        kwargs     : Additional imshow() kwargs
+    """
+    def get_title_map(title):
+        if title is None:
+            return lambda key: str(key)
+        elif isinstance(title, str):
+            return lambda key: f"{title} {key}"
+        else:
+            return title
+
+    images = list(images)
+    N = len(images)
+    colorbar = colorbar.strip().lower()
+    title_map = get_title_map(title)
+
+    # Compute common color range if needed
+    if colorbar == "align" and c_range is None:
+        all_vals = np.array([[img.min(), img.max()] for _, img in images])
+        c_range = (all_vals[:, 0].min(), all_vals[:, 1].max())
+
+    # Figure setup
+    W, H = 5 * N + 1, 5
+    fig, axs = plt.subplots(1, N, figsize=(W, H), sharey=(colorbar != "all"))
+    axs = np.atleast_1d(axs)
+    imgs = []
+
+    for i, ((key, image), ax) in enumerate(zip(images, axs)):
+        extent = [r_range[0], r_range[1], phi_range[0], phi_range[1]]
+        image = image.T 
+        img = ax.imshow(image, origin='lower', extent=extent, aspect='auto', cmap=cmap, **kwargs)
+        if c_range is not None:
+            img.set_clim(*c_range)
+        imgs.append(img)
+        ax.set_title(title_map(key))
+        ax.set_xlabel("R")
+        if i == 0 or colorbar == "all":
+            ax.set_ylabel("φ")
+
+    if colorbar != "none":
+        if colorbar in ["last", "align"]:
+            fig.subplots_adjust(right=0.85)
+            ax_pos = axs[-1].get_position().bounds
+            cax = fig.add_axes([0.87, ax_pos[1], 0.02, ax_pos[3]])
+            fig.colorbar(imgs[-1], cax=cax, label=clabel)
+        elif colorbar == "all":
+            for ax, im in zip(axs, imgs):
+                fig.colorbar(im, ax=ax, label=clabel)
+
+    fig.tight_layout()
     return fig
 
 
@@ -392,6 +500,76 @@ def update_metadata(dir_path: str, metadata: dict) -> None:
     with open(filepath, "w") as f:
         json.dump(existing_metadata, f, indent=4)
 
+from scipy.ndimage import map_coordinates
+def polar_to_cartesian(f_rphi, r_max=1.0, grid_shape=(256, 256)):
+    """
+    将极坐标函数 f(R, phi) 转换为直角坐标函数 f(X, Y)。
+    f_rphi: 2D numpy array，表示函数值，shape 为 (n_phi, n_r)
+    r_max: 极坐标半径最大值
+    grid_shape: 输出直角网格的形状 (height, width)
+
+    返回：
+        f_xy: 直角坐标下的二维函数值数组
+        X, Y: 对应的坐标网格
+    """
+    n_phi, n_r = f_rphi.shape
+    height, width = grid_shape
+
+    # 创建输出直角坐标网格，中心为 (0,0)
+    x = np.linspace(-r_max, r_max, width)
+    y = np.linspace(-r_max, r_max, height)
+    X, Y = np.meshgrid(x, y)
+
+    # 将直角坐标转换为极坐标
+    R = np.sqrt(X**2 + Y**2)
+    Phi = np.arctan2(Y, X)
+    Phi = np.mod(Phi, 2 * np.pi)
+
+    # 映射到原始 f_rphi 的坐标范围（注意反转轴顺序）
+    r_coords = (R / r_max) * (n_r - 1)
+    phi_coords = (Phi / (2 * np.pi)) * (n_phi - 1)
+
+    # 构造采样点 (phi_idx, r_idx)，注意 axis 0 是 phi，axis 1 是 r
+    coords = np.array([phi_coords.flatten(), r_coords.flatten()])
+
+    # 插值
+    f_xy = map_coordinates(f_rphi, coords, order=1, mode='nearest').reshape(grid_shape)
+
+    return f_xy, X, Y
+
+def cartesian_to_polar(f_xy, r_max=1.0, grid_shape=(256, 256)):
+    """
+    将直角坐标函数 f(X, Y) 转换为极坐标函数 f(R, phi)。
+    f_xy: 2D numpy array，shape 为 (height, width)
+    r_max: 极坐标最大半径
+    grid_shape: 输出极坐标网格形状 (n_phi, n_r)
+
+    返回：
+        f_rphi: 极坐标下的函数值数组
+        R, Phi: 极坐标网格
+    """
+    height, width = f_xy.shape
+    n_phi, n_r = grid_shape
+
+    # 创建极坐标网格
+    r = np.linspace(0, r_max, n_r)
+    phi = np.linspace(0, 2 * np.pi, n_phi)
+    R, Phi = np.meshgrid(r, phi)
+
+    # 极坐标转直角坐标
+    X = R * np.cos(Phi)
+    Y = R * np.sin(Phi)
+
+    # 映射到原始图像坐标（0 到 width/height）
+    x_coords = ((X + r_max) / (2 * r_max)) * (width - 1)
+    y_coords = ((Y + r_max) / (2 * r_max)) * (height - 1)
+
+    coords = np.array([y_coords.flatten(), x_coords.flatten()])
+
+    # 插值
+    f_rphi = map_coordinates(f_xy, coords, order=1, mode='nearest').reshape(grid_shape)
+
+    return f_rphi, R, Phi
 
 if __name__ == "__main__":
     import cupy as cp

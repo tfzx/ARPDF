@@ -5,10 +5,14 @@ import numpy as np
 import MDAnalysis as mda
 import MDAnalysis.analysis.distances as mda_dist
 from scipy.ndimage import gaussian_filter as gaussian_filter_np
-from utils import box_shift, generate_grids, calc_AFF, show_images
-from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, generate_field
+from utils import box_shift, generate_grids, calc_AFF, show_images, show_images_polar
+from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, generate_field_polar
 from utils.similarity import cosine_similarity
 from types import ModuleType
+from scipy.special import i0
+#
+
+
 
 def compute_all_atom_pairs(
         universe: mda.Universe, 
@@ -108,27 +112,42 @@ def get_atoms_pos(
             atom_pairs[(type1, type2)] = ij_idx[pair_mask]
     return center_pos, around_pos, center_group.masses, atom_pairs
 
-def compute_fields(
+def compute_fields_polar(
     atom_pairs: Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]],
-    X: ArrayType,
-    Y: ArrayType,
+    R: ArrayType,
+    Phi: ArrayType,
+    delta: Optional[float] = None,  
     verbose: bool = False
 ) -> Dict[Tuple[str, str], ArrayType]:
     """
-    Compute fields for all atom pair types.
+    Compute fields for all atom pair types using precomputed polar coordinates.
+
+    Parameters:
+        atom_pairs: Dict mapping atom pair (e.g., ('O', 'H')) to (r_vals, theta_vals) arrays.
+        R, Phi: Polar coordinate grid arrays (can be NumPy or CuPy).
+        verbose: Whether to print progress info.
 
     Returns:
-        fields: Dict of atom-pair-type -> computed field.
+        Dict of atom-pair-type -> computed polar field.
     """
-    h = X[1, 1] - X[0, 0]
+    xp = get_array_module(R)  # Determine NumPy or CuPy backend
+    if delta is None:
+        h = R[1, 1] - R[0, 0]  # Assume uniform spacing in R
+        delta = 2 * h 
 
     fields = {}
     for atom_pair_type, (r_vals, theta_vals) in atom_pairs.items():
-        fields[atom_pair_type] = generate_field(X, Y, r_vals, theta_vals, delta=2*h)
+        r_vals = xp.array(r_vals)
+        theta_vals = xp.array(theta_vals)
+
+        field = generate_field_polar(R, Phi, r_vals, theta_vals, delta)
+        fields[atom_pair_type] = field
+
         if verbose:
-            print(f"Computed field for {atom_pair_type[0]}-{atom_pair_type[1]}: {r_vals.shape[0]} atom pairs.")
+            print(f"Computed polar field for {atom_pair_type[0]}-{atom_pair_type[1]}: {r_vals.shape[0]} atom pairs.")
 
     return fields
+
 
 def get_diff_fields(
     fields1: Dict[Tuple[str, str], ArrayType],
@@ -142,125 +161,44 @@ def get_diff_fields(
     """
     return {pair_type: fields2[pair_type] - fields1[pair_type] for pair_type in fields1}
 
-def forward_transform(
-        diff_fields: Dict[Tuple[str, str], ArrayType], 
-        X: ArrayType, Y: ArrayType, 
-        sigma0: float,
-        type_counts: Dict[str, int], 
-        filter_fourier: Optional[Callable[[ArrayType, ArrayType, ModuleType], ArrayType]] = None
-    ) -> ArrayType:
-    """
-    Forward Fourier filtering, Atomic Form Factor weighting, Inverse FFT, Inverse Abel Transform to get ARPDF.
+   
 
-    Parameters:
-        diff_fields     : Dictionary mapping (atom_type1, atom_type2) -> diff fields
-        X, Y            : 2D real-space grids
-
-    Returns:
-        ARPDF : 2D numpy array of Angularly Resolved Pair Distribution Function
-    """
-    xp = get_array_module(X)
-    Nx, Ny = X.shape
-    hx = X[1, 1] - X[0, 0]  # grid spacing
-    hy = Y[1, 1] - Y[0, 0]
-
-    # Fourier grid
-    kx = xp.fft.fftfreq(Nx, d=hx)
-    ky = xp.fft.fftfreq(Ny, d=hy)
-    kX, kY = xp.meshgrid(kx, ky)
-    S = xp.sqrt(kX**2 + kY**2)
-
-    # Atomic Form Factors in Fourier space
-    AFFs = {atom: calc_AFF(atom, S) for atom in type_counts}
-    I_atom = sum([num_atom * AFFs[atom]**2 for atom, num_atom in type_counts.items()])
-
-    # Total FFT after applying atomic form factors
-    total_fft = xp.zeros_like(X, dtype=xp.complex64)
-    for (a1, a2), diff_field in diff_fields.items():
-        fft = xp.fft.fft2(diff_field)           # 2D FFT
-        fft *= AFFs[a1] * AFFs[a2]      # Apply atom form factors
-        total_fft += fft
-
-    '''
-    #临时添加
-    #alpha = 2  # 可以调节
-    #decay = xp.exp(-alpha * S**2)
-    total_fft_shifted = xp.fft.fftshift(total_fft)
-    fft_real = xp.asnumpy((total_fft_shifted/I_atom).real) if xp.__name__ == "cupy" else total_fft.real
-
-    plt.figure(figsize=(6, 5))
-    plt.imshow(fft_real, cmap="seismic", origin="lower")
-    plt.colorbar(label="Real part of total FFT")
-    plt.title("Real part of total FFT (after all atom pairs summed)")
-    plt.xlabel("kx")
-    plt.ylabel("ky")
-    plt.xlim(70,200)
-    plt.ylim(70,200)
-    plt.clim(-1000,1000)
-    plt.tight_layout()
-    plt.show()
-    '''
-    # Filter in Fourier space
-    if filter_fourier is None:
-        # _filter = (1 - xp.exp(-(kX**2 / 0.3 + kY**2 / 0.1)))**3 * xp.exp(-0.08 * S**2)
-        _filter = 1.0
-    else:
-        _filter = filter_fourier(kX, kY, xp)
-
-    # Inverse FFT to real space
-    total_fft = total_fft * _filter / I_atom
-    total_ifft = xp.fft.ifft2(total_fft).real
-
-    # Inverse Abel transform to get ARPDF
-    Inverse_Abel_total = abel_inversion(total_ifft) / hx
-
-    # Smoothing & r-weighting
-    if xp.__name__ == "cupy":
-        from cupyx.scipy.ndimage import gaussian_filter as gaussian_filter_cp
-        _gaussian_filter = gaussian_filter_cp
-    else:
-        _gaussian_filter = gaussian_filter_np
-    # sigma0 = 0.2
-    ARPDF = _gaussian_filter(Inverse_Abel_total, sigma=[sigma0/hx, sigma0/hy], mode="constant") * (X**2 + Y**2)
-
-    return ARPDF
-
-def compute_ARPDF(
+def compute_ARPDF_polar(
     u1: mda.Universe,
     u2: mda.Universe,
     N: int | None = 512,
     cutoff: float = 10.0,
     sigma0=0.4,
-    grids_XY: Optional[Tuple[ArrayType, ArrayType]] = None,
+    delta=None,
+    grids_polar: Optional[Tuple[ArrayType, ArrayType]] = None,  # (R, Phi)
     modified_atoms: Optional[List[int]] = None,
-    polar_axis = (0, 0, 1),
+    polar_axis=(0, 0, 1),
     periodic: bool = False,
     filter_fourier: Optional[Callable[[ArrayType, ArrayType, ModuleType], ArrayType]] = None,
     verbose: bool = False,
-    neg: bool =False
+    neg: bool = False
 ) -> ArrayType:
     """
-    Main pipeline: u1, u2 -> generate diff fields -> FFT -> AFF+filter -> Inverse FFT -> Inverse Abel -> ARPDF
-    Use cupy for the intermediate steps if available.
-    If grids_XY is given, use it directly. Otherwise, generate grids.
+    Main pipeline (polar version): 
+    u1, u2 -> atom pair projections (r, θ) -> generate polar fields -> diff -> ARPDF.
 
     Parameters
     ----------
     u1, u2          : MDAnalysis Universe objects (before/after structure)
     cutoff          : cutoff radius (A)
-    N               : grid size (NxN)
-    grids_XY        : optional pre-generated grids
+    N               : grid size (Nr × Nθ)
+    grids_polar     : optional pre-generated (R, Phi) meshgrid
     modified_atoms  : optional list of atom indices to modify
     polar_axis      : polarization axis of the laser
     periodic        : if True, consider periodic boundary condition
-    verbose         : if True, show intermediate plots
+    verbose         : if True, show intermediate output
 
     Returns
     -------
-    ARPDF           : Angularly Resolved Pair Distribution Function. 
-        If grids_XY is given, return the same type as (X, Y). Otherwise, return numpy arrays.
+    ARPDF           : Dict of angularly resolved difference fields in polar coordinates.
     """
     _print_func = print if verbose else lambda *args: None
+
     try:
         import cupy
         has_cupy = True
@@ -269,62 +207,82 @@ def compute_ARPDF(
         has_cupy = False
         _print_func("Cannot find cupy, using numpy instead.")
 
-    if grids_XY is None:
-        X, Y = generate_grids(cutoff, N)
+    # Handle polar grids
+    if grids_polar is None:
+        R, Phi = generate_grids(cutoff, N)  # You need to define this helper
         input_type = "numpy"
     else:
-        X, Y = grids_XY
-        input_type = get_array_module(grids_XY[0]).__name__
-        N = X.shape[0]
+        R, Phi = grids_polar
+        input_type = get_array_module(R).__name__
+        N = R.shape[0]
 
     if has_cupy and input_type == "numpy":
-        X, Y = to_cupy(X, Y)
+        R, Phi = to_cupy(R), to_cupy(Phi)
 
-    # Compute all atom pairs
-    atom_pairs1, num_sel1 = compute_all_atom_pairs(u1, cutoff, modified_atoms, polar_axis, periodic)
-    atom_pairs2, num_sel2 = compute_all_atom_pairs(u2, cutoff, modified_atoms, polar_axis, periodic)
-    # Convert to cupy if necessary
+    # Compute atom pairs in polar projection (returns (r_vals, theta_vals))
+    atom_pairs1, num_sel1 = compute_all_atom_pairs(u1, cutoff, modified_atoms, polar_axis, periodic=True)
+    atom_pairs2, num_sel2 = compute_all_atom_pairs(u2, cutoff, modified_atoms, polar_axis, periodic=True)
+
     if has_cupy:
         atom_pairs1 = to_cupy(atom_pairs1)
         atom_pairs2 = to_cupy(atom_pairs2)
-    _print_func(f"Selected {num_sel1} atoms for universe 1, {num_sel2} atoms for universe 2.")
 
-    # Compute 2D projected fields for both structures
-    _print_func("Computing fields of universe 1...")
-    fields1 = compute_fields(atom_pairs1, X, Y, verbose)
-    _print_func("Computing fields of universe 2...")
-    fields2 = compute_fields(atom_pairs2, X, Y, verbose)
+    _print_func(f"Selected {num_sel1} atoms in u1, {num_sel2} atoms in u2.")
 
-    # Difference fields
+    # Compute projected fields in polar coordinates
+    _print_func("Computing polar fields for universe 1...")
+    fields1 = compute_fields_polar(atom_pairs1, R, Phi, delta, verbose)
+    _print_func("Computing polar fields for universe 2...")
+    fields2 = compute_fields_polar(atom_pairs2, R, Phi, delta, verbose)
+
+    # Difference
     diff_fields = get_diff_fields(fields1, fields2)
 
     if verbose:
-        show_images(to_numpy(fields1).items(), plot_range=cutoff, colorbar="all", cmap="inferno", 
-                    title=lambda x: f"Field for {x[0]}-{x[1]}")
         diff_fields_np = to_numpy(diff_fields)
-        c_range = np.array([np.abs(field).max() for field in diff_fields_np.values()])
-        c_range = np.array([-c_range, c_range]).T
-        show_images(diff_fields_np.items(), plot_range=cutoff, c_range=c_range, colorbar="all", cmap="bwr", 
-                    title=lambda x: f"Diff Field for {x[0]}-{x[1]}")
+        show_images_polar(
+            diff_fields_np.items(),
+            r_range=(0, cutoff),                # 你的半径范围
+            phi_range=(0, 0.5 * np.pi),         # 角度范围
+            cmap="bwr",
+            title=lambda x: f"Polar Diff Field for {x[0]}-{x[1]}",
+        )
 
-    # ARPDF computation
-    _print_func("Computing ARPDF...")
-    ARPDF = forward_transform(diff_fields, X, Y, sigma0, Counter(u1.atoms.types), filter_fourier)
-    normalize_factor = num_sel1 / len(u1.atoms)
-    ARPDF = ARPDF / normalize_factor * 100
+    # Final ARPDF = difference of fields (can include filtering, IFFT, Abel, etc. as needed)
+    ARPDF = diff_fields
 
     if neg:
-        ARPDF[ARPDF>0]=0
+        for key in ARPDF:
+            ARPDF[key][ARPDF[key] > 0] = 0
+
+    # Weighted sum of ARPDF
+    weights = {
+        ("C", "C"): 1,
+        ("C", "Cl"): 2,
+        ("Cl", "Cl"): 4
+    }
+
+    total_ARPDF = None
+    for key, field in ARPDF.items():
+        sorted_key = tuple(sorted(key))
+        weight = weights.get(sorted_key, 1)
+        weighted_field = field * weight
+        total_ARPDF = weighted_field if total_ARPDF is None else total_ARPDF + weighted_field
+
+    ARPDF["total"] = total_ARPDF
 
     if verbose:
-        xmin, xmax = X.min(), X.max()
-        ymin, ymax = Y.min(), Y.max()
-        img = to_numpy(ARPDF)
-        show_images([("ARPDF", img)], plot_range=to_numpy([xmin, xmax, ymin, ymax]), show_range=8, cmap="bwr", 
-                    c_range=0.5*img.max(), clabel="Reconstructed Intensity") #, interpolation='bicubic')
-        plt.show()
+        ARPDF_np = to_numpy(ARPDF) 
+        show_images_polar(
+            [("total", ARPDF_np["total"])],
+            r_range=(0, cutoff),
+            phi_range=(0, 0.5 * np.pi),
+            cmap="bwr",
+            title=lambda x: f"Weighted Polar Diff Field (Total)"
+        )
 
     return ARPDF if input_type == "cupy" else to_numpy(ARPDF)
+
 
 def compare_ARPDF(ARPDF, ARPDF_ref, grids_XY, sim_name = "Sim", sim_value = None, show_range = 8.0, weight_cutoff = 5.0):
     if sim_value is None:

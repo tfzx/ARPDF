@@ -34,6 +34,7 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
     # Load the search results
     with open(os.path.join(exp_dir, "results.pkl"), "rb") as f:
         results: List[SearchResult] = pickle.load(f)
+    results = [results[i] for i in [0, 2]]
 
     # Create the output directory if it doesn't exist
     output_path = os.path.join(exp_dir, output_dir)
@@ -61,12 +62,13 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
         cutoff=cutoff,
         sigma0=sigma0,
         weight_cutoff=weight_cutoff,
-        lr=0.01,
+        lr=0.02,
         gamma_lr=0.995,
+        gamma_noise=0.999, 
         f_lb=-1.0, 
         s=0.0, 
         beta=0.1, 
-        epochs=500,
+        epochs=1500,
         loss_name="angular_scale",
         device=device
     )
@@ -74,7 +76,6 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
 
     # Iterate over each search result
     for i, result in tqdm(enumerate(results), desc="Optimizing all structures", total=total_structures, position=1):
-
         # Create a subdirectory for this structure
         struct_dir = os.path.join(output_path, f"structure_{i}")
         os.makedirs(struct_dir, exist_ok=True)
@@ -122,6 +123,6 @@ def optimize_all_structures(exp_dir: str, output_dir: str = "optimize"):
 
 # Example usage
 if __name__ == "__main__":
-    exp_dir = "tmp/exp_angular_scale_3nm_flat_cutoff_5"  # Adjust based on your directory
+    exp_dir = "tmp/test2"  # Adjust based on your directory
     optimize_all_structures(exp_dir)
     print("All structures optimized successfully.")

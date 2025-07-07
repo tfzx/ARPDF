@@ -233,7 +233,7 @@ def generate_field(X: ArrayType, Y: ArrayType, r_vals: ArrayType, theta_vals: Ar
     # Get quadrant size
     nx, ny = X.shape
     qx, qy = (nx + 1) // 2, (ny + 1) // 2
-    rqx, rqy = nx - qx, ny - qy
+    rx, ry = nx - qx, ny - qy
     
     # Calculate for first quadrant only
     X_quad = X[:qx, :qy]
@@ -247,13 +247,9 @@ def generate_field(X: ArrayType, Y: ArrayType, r_vals: ArrayType, theta_vals: Ar
         raise ValueError(f"Unsupported array type: {xp.__name__}")
         
     # Reconstruct full result using symmetry
-    result = xp.zeros_like(X)
-    result[:qx, :qy] = quad_result
-    result[:qx, -rqy:] = xp.fliplr(quad_result[:, :rqy])
-    result[-rqx:, :qy] = xp.flipud(quad_result[:rqx, :])
-    result[-rqx:, -rqy:] = xp.flipud(xp.fliplr(quad_result[:rqx, :rqy]))
-    
-    return result
+    Top = xp.concatenate((quad_result, xp.fliplr(quad_result[:, :ry])), axis=1)
+    Bottom = xp.flipud(Top[:rx, :])
+    return xp.concatenate((Top, Bottom), axis=0)
 
 
 _generate_field_polar_C = r'''

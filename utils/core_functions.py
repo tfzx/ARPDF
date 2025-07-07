@@ -229,12 +229,31 @@ def generate_field(X: ArrayType, Y: ArrayType, r_vals: ArrayType, theta_vals: Ar
     Wrapper for field generation.
     """
     xp = get_array_module(X)
+    
+    # Get quadrant size
+    nx, ny = X.shape
+    qx, qy = (nx + 1) // 2, (ny + 1) // 2
+    rqx, rqy = nx - qx, ny - qy
+    
+    # Calculate for first quadrant only
+    X_quad = X[:qx, :qy]
+    Y_quad = Y[:qx, :qy]
+    
     if xp.__name__ == "numpy":
-        return generate_field_numpy(X, Y, r_vals, theta_vals, delta, batch_size=128)
+        quad_result = generate_field_numpy(X_quad, Y_quad, r_vals, theta_vals, delta, batch_size=128)
     elif xp.__name__ == "cupy":
-        return generate_field_cuda(X, Y, r_vals, theta_vals, delta)
+        quad_result = generate_field_cuda(X_quad, Y_quad, r_vals, theta_vals, delta)
     else:
         raise ValueError(f"Unsupported array type: {xp.__name__}")
+        
+    # Reconstruct full result using symmetry
+    result = xp.zeros_like(X)
+    result[:qx, :qy] = quad_result
+    result[:qx, -rqy:] = xp.fliplr(quad_result[:, :rqy])
+    result[-rqx:, :qy] = xp.flipud(quad_result[:rqx, :])
+    result[-rqx:, -rqy:] = xp.flipud(xp.fliplr(quad_result[:rqx, :rqy]))
+    
+    return result
 
 
 _generate_field_polar_C = r'''

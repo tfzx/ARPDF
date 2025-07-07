@@ -166,8 +166,9 @@ def forward_transform(
 
     # Fourier grid
     kx = xp.fft.fftfreq(Nx, d=hx)
-    ky = xp.fft.fftfreq(Ny, d=hy)
-    kX, kY = xp.meshgrid(kx, ky)
+    # ky = xp.fft.fftfreq(Ny, d=hy)
+    ky = xp.fft.rfftfreq(Ny, d=hy)
+    kX, kY = xp.meshgrid(kx, ky, indexing='ij')
     S = xp.sqrt(kX**2 + kY**2)
 
     # Atomic Form Factors in Fourier space
@@ -175,31 +176,13 @@ def forward_transform(
     I_atom = sum([num_atom * AFFs[atom]**2 for atom, num_atom in type_counts.items()])
 
     # Total FFT after applying atomic form factors
-    total_fft = xp.zeros_like(X, dtype=xp.complex64)
+    total_fft = xp.zeros_like(kX, dtype=xp.complex64)
     for (a1, a2), diff_field in diff_fields.items():
-        fft = xp.fft.fft2(diff_field)           # 2D FFT
+        # fft = xp.fft.fft2(diff_field)           # 2D FFT
+        fft = xp.fft.rfft2(diff_field)           # 2D FFT
         fft *= AFFs[a1] * AFFs[a2]      # Apply atom form factors
         total_fft += fft
 
-    '''
-    #临时添加
-    #alpha = 2  # 可以调节
-    #decay = xp.exp(-alpha * S**2)
-    total_fft_shifted = xp.fft.fftshift(total_fft)
-    fft_real = xp.asnumpy((total_fft_shifted/I_atom).real) if xp.__name__ == "cupy" else total_fft.real
-
-    plt.figure(figsize=(6, 5))
-    plt.imshow(fft_real, cmap="seismic", origin="lower")
-    plt.colorbar(label="Real part of total FFT")
-    plt.title("Real part of total FFT (after all atom pairs summed)")
-    plt.xlabel("kx")
-    plt.ylabel("ky")
-    plt.xlim(70,200)
-    plt.ylim(70,200)
-    plt.clim(-1000,1000)
-    plt.tight_layout()
-    plt.show()
-    '''
     # Filter in Fourier space
     if filter_fourier is None:
         # _filter = (1 - xp.exp(-(kX**2 / 0.3 + kY**2 / 0.1)))**3 * xp.exp(-0.08 * S**2)
@@ -209,7 +192,8 @@ def forward_transform(
 
     # Inverse FFT to real space
     total_fft = total_fft * _filter / I_atom
-    total_ifft = xp.fft.ifft2(total_fft).real
+    # total_ifft = xp.fft.ifft2(total_fft).real
+    total_ifft = xp.fft.irfft2(total_fft, s=(Nx, Ny))
 
     # Inverse Abel transform to get ARPDF
     Inverse_Abel_total = abel_inversion(total_ifft) / hx
@@ -274,7 +258,7 @@ def compute_ARPDF(
         input_type = "numpy"
     else:
         X, Y = grids_XY
-        input_type = get_array_module(grids_XY[0]).__name__
+        input_type = get_array_module(X).__name__
         N = X.shape[0]
 
     if has_cupy and input_type == "numpy":

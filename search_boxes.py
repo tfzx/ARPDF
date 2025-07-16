@@ -4,8 +4,9 @@ import cupy as cp
 import numpy as np
 import MDAnalysis as mda
 from ARPDF import compute_ARPDF, compare_ARPDF
+from ARPDF_POLAR import compute_ARPDF_polar, compare_ARPDF_polar
 from utils import select_nbr_mols, clean_gro_box, rotate_ccl4_molecules, select_ccl4_molecules, update_metadata
-from utils.similarity import cosine_similarity, get_angular_filters, angular_similarity, strength_similarity, oneD_similarity, angular_average_similarity
+from utils.similarity import cosine_similarity, get_angular_filters, get_gaussian_filters, angular_similarity, strength_similarity, oneD_similarity, angular_average_similarity, polar_angular_similarity
 from utils.core_functions import to_cupy
 from ccl4_modifier import CCL4Modifier_CL, select_cl_atoms
 from typing import Callable, List, Tuple, Optional, Protocol
@@ -101,7 +102,7 @@ class SimilarityCalculator:
             'angular_scale': lambda x, y: angular_similarity(x, y, self.angular_filters, self.r_weight) * strength_similarity(x, y, self.angular_filters, self.r_weight)
         }
         return metric_funcs[metric]
-
+    
 class StructureSearcher:
     """Handle structure search and result management"""
     
@@ -292,6 +293,170 @@ class StructureSearcher:
         fig.savefig(f"{self.output_dir}/{prefix}.png")
 
 
+class PolarStructureSearcher:
+    """Structure searcher using polar coordinates and polar similarity"""
+
+    def __init__(self, 
+                 output_dir: str,
+                 universe: mda.Universe,
+                 grids_polar: Tuple[np.ndarray, np.ndarray],  # (R, Theta)
+                 ARPDF_ref: np.ndarray,
+                 molecule_selector: Callable[[mda.Universe], List[int]],
+                 structure_modifier: StrucModProtocol,
+                 filter_fourier: Optional[Callable] = None,
+                 cutoff: float = 10.0,
+                 weight_cutoff: float = 4.0,
+                 delta: float = 0.2,
+                 sigma_similarity: float = 0.3,
+                 neg: bool = False):
+        """
+        Args:
+            grids_polar: Tuple of (R, Theta) meshgrid
+            ARPDF_ref: Polar ARPDF to compare against (shape [Nr, Nθ])
+            r_vals: 1D radial coordinate array
+            sigma_similarity: Gaussian width for similarity weighting
+        """
+        self.output_dir = output_dir
+        os.makedirs(output_dir, exist_ok=True)
+        self.universe = universe
+        self.R_polar, self.Theta_polar = to_cupy(grids_polar)
+        self.ARPDF_ref = to_cupy(ARPDF_ref)
+        self.weight_cutoff = weight_cutoff
+
+        self.r0_arr = cp.linspace(0, 8, 40)
+        dr0 = self.r0_arr[1] - self.r0_arr[0]
+        self.gaussian_filters = get_gaussian_filters(self.R_polar, self.r0_arr, sigma=dr0/6.0)
+        self.r_weight = cp.exp(-cp.maximum(self.r0_arr - self.weight_cutoff, 0)**2 / (2 * (0.5)**2))/ (1 + cp.exp(-10 * (self.r0_arr - 1)))
+        self.r_weight /= self.r_weight.sum()
+
+        self.filter_fourier = filter_fourier
+        self.cutoff = cutoff
+        self.delta = delta
+        self.neg = neg
+        self.sigma_similarity = sigma_similarity
+
+        self.molecule_selector = molecule_selector
+        self.structure_modifier = structure_modifier
+        self.results: List[SearchResult] = []
+
+    def search(self):
+        """Perform structure search"""
+        molecule_list = self.molecule_selector(self.universe)
+        
+        for molecule in molecule_list:
+            best_similarity = -np.inf
+            best_result = None
+            
+            for polar_axis, u2, modified_atoms in self.structure_modifier.generate_modified_structures(molecule):
+                ARPDF = compute_ARPDF_polar(
+                    u1=self.universe,
+                    u2=u2,
+                    N=512,
+                    cutoff=self.cutoff,
+                    sigma0=0.0,  # not used
+                    delta=self.delta,
+                    grids_polar=(self.R_polar, self.Theta_polar),
+                    modified_atoms=modified_atoms,
+                    polar_axis=polar_axis,
+                    periodic=True,
+                    filter_fourier=self.filter_fourier,
+                    verbose=False,
+                    neg=self.neg
+                )
+
+                similarity = polar_angular_similarity(
+                    ARPDF["total"], 
+                    self.ARPDF_ref, 
+                    self.gaussian_filters, 
+                    self.r_weight
+                ).get() * strength_similarity(ARPDF["total"], 
+                    self.ARPDF_ref, 
+                    self.gaussian_filters, 
+                    self.r_weight).get()
+                
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_result = SearchResult(
+                        molecule=int(molecule),
+                        polar_axis=[float(x) for x in polar_axis],
+                        modified_universe=u2,
+                        ARPDF=ARPDF["total"].get(),
+                        similarity=float(similarity),
+                        modified_atoms=[int(x) for x in modified_atoms]
+                    )
+            
+            if best_result is not None:
+                self.results.append(best_result)
+
+        return self.results
+
+    def save_results(self):
+        """Save best and worst results to output_dir"""
+        if not self.results:
+            return
+        
+        best_result = max(self.results, key=lambda x: x.similarity)
+        worst_result = min(self.results, key=lambda x: x.similarity)
+
+        self.universe.atoms.write(f"{self.output_dir}/CCl4.gro")
+        best_result.modified_universe.atoms.write(f"{self.output_dir}/CCl4_best_init.gro")
+
+        self._save_single_result(best_result, "best_init")
+        self._save_single_result(worst_result, "worst_init")
+
+        np.save(f"{self.output_dir}/ARPDF_ref.npy", self.ARPDF_ref.get())
+
+        with open(f"{self.output_dir}/results.pkl", "wb") as f:
+            pickle.dump(self.results, f)
+
+        update_metadata(self.output_dir, {
+            "name": "CCl4",
+            "structure_info": {
+                "u1_name": "CCl4.gro",
+                "u2_name": "CCl4_best_init.gro",
+                "polar_axis": best_result.polar_axis,
+                "modified_atoms": best_result.modified_atoms
+            },
+            "search_info": {
+                "parameters": {
+                    "grids_shape": list(self.R_polar.shape),
+                    "cutoff": self.cutoff,
+                    "delta": self.delta,
+                    "sigma_similarity": self.sigma_similarity,
+                    "neg": self.neg,
+                },
+                "best_result": {
+                    "file_name": "CCl4_best_init.gro",
+                    "similarity": best_result.similarity,
+                    "polar_axis": best_result.polar_axis,
+                    "modified_atoms": best_result.modified_atoms,
+                    "molecule": best_result.molecule
+                },
+                "worst_result": {
+                    "file_name": "CCl4_worst_init.gro",
+                    "similarity": worst_result.similarity,
+                    "polar_axis": worst_result.polar_axis,
+                    "modified_atoms": worst_result.modified_atoms,
+                    "molecule": worst_result.molecule
+                }
+            },
+        })
+
+    def _save_single_result(self, result: SearchResult, prefix: str):
+        save_ccl4_result(result, f"{self.output_dir}/{prefix}_selected.gro", nbr_distance=5.0)
+        fig = compare_ARPDF_polar(
+            result.ARPDF, 
+            self.ARPDF_ref.get(), 
+            (self.R_polar.get(), self.Theta_polar.get()),
+            sim_name="Polar Gaussian Sim", 
+            sim_value=result.similarity,
+            show_range=8.0,
+            weight_cutoff=self.cutoff
+        )
+        fig.savefig(f"{self.output_dir}/{prefix}.png")
+
+
+
 def workflow_demo(
         X, Y, ARPDF_ref, 
         filter_fourier=None, 
@@ -328,3 +493,64 @@ def workflow_demo(
     # Search and save results
     searcher.search()
     searcher.save_results()
+
+
+def polar_workflow_demo(
+        R: np.ndarray,
+        Theta: np.ndarray,
+        ARPDF_ref: np.ndarray,
+        filter_fourier=None,
+        exp_name: str = "exp_polar",
+        sigma_similarity: float = 0.3,
+        delta: float = 0.2,
+        cutoff: float = 10.0,
+        weight_cutoff: float = 5.0,
+        stretch_distances: List[float] = None,
+        neg: bool = False
+    ):
+    """
+    Workflow demo for polar-coordinate-based structure search using PolarStructureSearcher.
+    
+    Args:
+        R: 2D radial meshgrid (shape [Nr, Nθ])
+        Theta: 2D angular meshgrid (shape [Nr, Nθ])
+        ARPDF_ref: Reference polar ARPDF (shape [Nr, Nθ])
+        r_vals: 1D radial grid corresponding to R
+        filter_fourier: Optional filtering function for ARPDF
+        exp_name: Experiment name for output directory
+        sigma_similarity: Gaussian similarity width
+        delta: Angular grid step size (rad)
+        cutoff: Cutoff for RDF and weighting
+        stretch_distances: Distances to stretch in CCl4Modifier_CL
+        neg: Whether to use negative ARPDF values only
+    """
+    # Clean and load structure
+    clean_gro_box('data/CCl4/CCl4.gro', 'data/CCl4/CCl4_clean.gro')
+    universe = mda.Universe('data/CCl4/CCl4_clean.gro')
+
+    # Optional preprocessing
+    if neg:
+        ARPDF_ref = ARPDF_ref.copy()
+        ARPDF_ref[ARPDF_ref > 0] = 0
+
+    # Initialize polar structure searcher
+    searcher = PolarStructureSearcher(
+        output_dir=f"tmp/{exp_name}",
+        universe=universe,
+        grids_polar=(R, Theta),
+        ARPDF_ref=ARPDF_ref,
+        molecule_selector=select_cl_atoms,
+        structure_modifier=CCL4Modifier_CL(universe, stretch_distances, periodic=True),
+        filter_fourier=filter_fourier,
+        cutoff=cutoff,
+        delta=delta,
+        sigma_similarity=sigma_similarity,
+        neg=neg
+    )
+
+    # Run the search
+    searcher.search()
+
+    # Save results
+    searcher.save_results()
+

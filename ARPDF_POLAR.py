@@ -9,6 +9,7 @@ from utils import box_shift, generate_grids, calc_AFF, show_images, show_images_
 from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, generate_field_polar, prepare_field_polar_cache
 from types import ModuleType
 from scipy.special import i0
+from utils.weights import generate_pair_weights
 #
 
 
@@ -259,11 +260,7 @@ def compute_ARPDF_polar(
             ARPDF[key][ARPDF[key] > 0] = 0
 
     # Weighted sum of ARPDF
-    weights = {
-        ("C", "C"): 1,
-        ("C", "Cl"): 2,
-        ("Cl", "Cl"): 4
-    }
+    weights = generate_pair_weights()
 
     total_ARPDF = None
     for key, field in ARPDF.items():

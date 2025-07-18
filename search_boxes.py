@@ -102,7 +102,40 @@ class SimilarityCalculator:
             'angular_scale': lambda x, y: angular_similarity(x, y, self.angular_filters, self.r_weight) * strength_similarity(x, y, self.angular_filters, self.r_weight)
         }
         return metric_funcs[metric]
+
+
+class PolarSimilarityCalculator:
+    """Handle similarity calculations between polar ARPDFs"""
     
+    def __init__(self, R, Theta, weight_cutoff=5.0, metric='cosine'):
+        self.R, self.Theta = to_cupy(R, Theta)
+        self.weight_cutoff = weight_cutoff
+        self._initialize_weights()
+        self._metric = self._get_metric_function(metric)
+    
+    def _initialize_weights(self):
+        """Initialize various weights for polar similarity calculations"""
+        # Circular weights
+        self.r0_arr = cp.linspace(0, 8, 40)
+        dr0 = self.r0_arr[1] - self.r0_arr[0]
+        self.gaussian_filter = get_gaussian_filters(self.R, self.r0_arr, sigma=dr0/6.0)
+        self.r_weight = cp.exp(-cp.maximum(self.r0_arr - self.weight_cutoff, 0)**2 / (2 * (0.5)**2))/ (1 + cp.exp(-10 * (self.r0_arr - 1)))
+        self.r_weight /= self.r_weight.sum()
+        
+    
+    def calc_similarity(self, ARPDF, ARPDF_exp):
+        """Calculate similarity between two ARPDFs"""
+        return self._metric(ARPDF, ARPDF_exp)
+    
+    def _get_metric_function(self, metric):
+        """Get the appropriate metric function"""
+        metric_funcs = {
+            'angular': lambda x, y: polar_angular_similarity(x, y, self.gaussian_filter, self.r_weight),
+            'angular_scale': lambda x, y: polar_angular_similarity(x, y, self.gaussian_filter, self.r_weight) * strength_similarity(x, y, self.gaussian_filter, self.r_weight)
+        }
+        return metric_funcs[metric]
+
+
 class StructureSearcher:
     """Handle structure search and result management"""
     
@@ -307,6 +340,7 @@ class PolarStructureSearcher:
                  cutoff: float = 10.0,
                  weight_cutoff: float = 4.0,
                  delta: float = 0.2,
+                 metric: str = 'angular_scale',
                  sigma_similarity: float = 0.3,
                  neg: bool = False):
         """
@@ -323,11 +357,15 @@ class PolarStructureSearcher:
         self.ARPDF_ref = to_cupy(ARPDF_ref)
         self.weight_cutoff = weight_cutoff
 
-        self.r0_arr = cp.linspace(0, 8, 40)
-        dr0 = self.r0_arr[1] - self.r0_arr[0]
-        self.gaussian_filters = get_gaussian_filters(self.R_polar, self.r0_arr, sigma=dr0/6.0)
-        self.r_weight = cp.exp(-cp.maximum(self.r0_arr - self.weight_cutoff, 0)**2 / (2 * (0.5)**2))/ (1 + cp.exp(-10 * (self.r0_arr - 1)))
-        self.r_weight /= self.r_weight.sum()
+        self.metric = metric
+        self.similarity_calc = PolarSimilarityCalculator(self.R_polar, self.Theta_polar, weight_cutoff, metric)
+        
+
+        #self.r0_arr = cp.linspace(0, 8, 40)
+        #dr0 = self.r0_arr[1] - self.r0_arr[0]
+        #self.gaussian_filters = get_gaussian_filters(self.R_polar, self.r0_arr, sigma=dr0/6.0)
+        #self.r_weight = cp.exp(-cp.maximum(self.r0_arr - self.weight_cutoff, 0)**2 / (2 * (0.5)**2))/ (1 + cp.exp(-10 * (self.r0_arr - 1)))
+        #self.r_weight /= self.r_weight.sum()
 
         self.filter_fourier = filter_fourier
         self.cutoff = cutoff
@@ -342,6 +380,8 @@ class PolarStructureSearcher:
     def search(self):
         """Perform structure search"""
         molecule_list = self.molecule_selector(self.universe)
+
+        ARPDF_ref = to_cupy(self.ARPDF_ref)
         
         for molecule in molecule_list:
             best_similarity = -np.inf
@@ -364,6 +404,9 @@ class PolarStructureSearcher:
                     neg=self.neg
                 )
 
+                similarity = self.similarity_calc.calc_similarity(ARPDF['total'], ARPDF_ref).get()
+
+                '''
                 similarity = polar_angular_similarity(
                     ARPDF["total"], 
                     self.ARPDF_ref, 
@@ -373,6 +416,7 @@ class PolarStructureSearcher:
                     self.ARPDF_ref, 
                     self.gaussian_filters, 
                     self.r_weight).get()
+                '''
                 
                 if similarity > best_similarity:
                     best_similarity = similarity
@@ -504,6 +548,7 @@ def polar_workflow_demo(
         sigma_similarity: float = 0.3,
         delta: float = 0.2,
         cutoff: float = 10.0,
+        metric: str = 'angular_scale',
         weight_cutoff: float = 5.0,
         stretch_distances: List[float] = None,
         neg: bool = False
@@ -543,7 +588,9 @@ def polar_workflow_demo(
         structure_modifier=CCL4Modifier_CL(universe, stretch_distances, periodic=True),
         filter_fourier=filter_fourier,
         cutoff=cutoff,
+        metric=metric,
         delta=delta,
+        weight_cutoff=weight_cutoff,
         sigma_similarity=sigma_similarity,
         neg=neg
     )

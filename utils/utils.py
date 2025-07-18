@@ -1,14 +1,79 @@
 import os
 # import cupy as cp
 from matplotlib import pyplot as plt
+from typing import Callable, Dict, List, Optional, Tuple
 import numpy as np
 from typing import Any, List, Optional, Tuple, Iterable
 import json
 import MDAnalysis as mda
 from MDAnalysis.analysis import align
+import MDAnalysis.analysis.distances as mda_dist
 from numpy._typing._array_like import NDArray
 from utils.core_functions import ArrayType, get_array_module
 
+def compute_all_atom_pairs(
+        universe: mda.Universe, 
+        cutoff: float = 10.0, 
+        modified_atoms: List[int] = None, 
+        polar_axis = (0, 0, 1),
+        periodic = False
+    ) -> Tuple[Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]], int]:
+    """
+    Compute (r, theta) for all atom pairs within a cutoff distance and group them by atom types.
+
+    Parameters:
+        universe (mda.Universe): The MDAnalysis Universe object.
+        cutoff (float): Cutoff distance for neighbor search.
+        modified_atoms (List[int], optional): Atom indices to limit pair search.
+        polar_axis (tuple): Axis to compute theta angle against.
+        periodic (bool): if True, consider periodic boundary condition.
+
+    Returns:
+        (atom_pairs, num_selected):
+        atom_pairs (dict): Mapping from (atom_type_1, atom_type_2) -> (r_values, theta_values).
+        num_selected (int): Number of selected atoms.
+    """
+    # Step 1: Select atoms
+    if modified_atoms is not None:
+        center_group = universe.atoms[modified_atoms]
+        selected_group = center_group + universe.select_atoms(f"around {cutoff} group center", center=center_group, periodic=periodic)
+    else:
+        center_group = universe.atoms
+        selected_group = universe.atoms
+
+    # Step 2: Compute pairwise distance matrix
+    box = universe.dimensions if periodic else None
+    dist_box = np.array(
+        mda_dist.distance_array(center_group.positions, selected_group.positions, box),
+        dtype=np.float32
+    )
+
+    # Step 3: Mask valid pairs (distance < cutoff and i < j)
+    mask = (dist_box < cutoff) & np.triu(np.ones_like(dist_box, dtype=np.bool_), k=1)
+    i_idx, j_idx = np.nonzero(mask)
+
+    # Step 4: Compute r values and theta values
+    r_vals = dist_box[mask]
+    vectors = box_shift(np.array(selected_group.positions)[j_idx] - np.array(center_group.positions)[i_idx], box)
+    polar_axis = np.asarray(polar_axis, dtype=np.float32)
+    polar_axis /= np.linalg.norm(polar_axis)  # normalize
+    theta_vals = np.arccos(np.clip(np.sum(vectors * polar_axis, axis=1) / np.linalg.norm(vectors, axis=1), -1.0, 1.0))
+
+    # Step 5: Prepare atom type pairs
+    all_atom_types = sorted(set(universe.atoms.types))
+    atom_types_center = np.array(center_group.types, dtype="<U4")
+    atom_types_around = np.array(selected_group.types, dtype="<U4")
+    atom_pair_types = np.stack([atom_types_center[i_idx], atom_types_around[j_idx]], axis=1)
+    atom_pair_types.sort(axis=1)  # enforce type1 <= type2
+
+    # Step 6: Organize into dictionary grouped by atom pair types
+    atom_pairs = {}
+    for i, type1 in enumerate(all_atom_types):
+        for type2 in all_atom_types[i:]:
+            pair_mask = np.all(atom_pair_types == [type1, type2], axis=1)
+            atom_pairs[(type1, type2)] = (r_vals[pair_mask], theta_vals[pair_mask])
+
+    return atom_pairs, len(selected_group)
 
 def box_shift(dx: ArrayType, box: Optional[List[float]] = None) -> ArrayType:
     """

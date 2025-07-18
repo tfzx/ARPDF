@@ -1,4 +1,5 @@
 from utils.utils import (
+    compute_all_atom_pairs,
     box_shift,
     get_xy_range,
     select_nbr_mols,
@@ -21,6 +22,7 @@ from utils.box_modify import adjust_ccl3_structure, adjust_ccl, compute_axis_dir
 from utils.analyze_structure import analyze_ccl4_structure, StructureAnalysisResult, select_ccl4_molecules, select_nearest_ccl4_molecules, rotate_ccl4_molecules
 
 __all__ = [
+    'compute_all_atom_pairs',
     'box_shift',
     'get_xy_range',
     'select_nbr_mols',

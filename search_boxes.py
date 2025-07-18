@@ -339,7 +339,7 @@ class PolarStructureSearcher:
                  filter_fourier: Optional[Callable] = None,
                  cutoff: float = 10.0,
                  weight_cutoff: float = 4.0,
-                 delta: float = 0.2,
+                 sigma0: float = 0.2,
                  metric: str = 'angular_scale',
                  sigma_similarity: float = 0.3,
                  neg: bool = False):
@@ -369,7 +369,7 @@ class PolarStructureSearcher:
 
         self.filter_fourier = filter_fourier
         self.cutoff = cutoff
-        self.delta = delta
+        self.sigma0 = sigma0
         self.neg = neg
         self.sigma_similarity = sigma_similarity
 
@@ -393,13 +393,11 @@ class PolarStructureSearcher:
                     u2=u2,
                     N=512,
                     cutoff=self.cutoff,
-                    sigma0=0.0,  # not used
-                    delta=self.delta,
+                    sigma0=self.sigma0, 
                     grids_polar=(self.R_polar, self.Theta_polar),
                     modified_atoms=modified_atoms,
                     polar_axis=polar_axis,
                     periodic=True,
-                    filter_fourier=self.filter_fourier,
                     verbose=False,
                     neg=self.neg
                 )
@@ -465,7 +463,7 @@ class PolarStructureSearcher:
                 "parameters": {
                     "grids_shape": list(self.R_polar.shape),
                     "cutoff": self.cutoff,
-                    "delta": self.delta,
+                    "sigma0": self.sigma0,
                     "sigma_similarity": self.sigma_similarity,
                     "neg": self.neg,
                 },
@@ -543,10 +541,10 @@ def polar_workflow_demo(
         R: np.ndarray,
         Theta: np.ndarray,
         ARPDF_ref: np.ndarray,
-        filter_fourier=None,
+        #filter_fourier=None,
         exp_name: str = "exp_polar",
         sigma_similarity: float = 0.3,
-        delta: float = 0.2,
+        sigma0: float = 0.2,
         cutoff: float = 10.0,
         metric: str = 'angular_scale',
         weight_cutoff: float = 5.0,
@@ -586,10 +584,10 @@ def polar_workflow_demo(
         ARPDF_ref=ARPDF_ref,
         molecule_selector=select_cl_atoms,
         structure_modifier=CCL4Modifier_CL(universe, stretch_distances, periodic=True),
-        filter_fourier=filter_fourier,
+        #filter_fourier=filter_fourier,
         cutoff=cutoff,
         metric=metric,
-        delta=delta,
+        sigma0=sigma0,
         weight_cutoff=weight_cutoff,
         sigma_similarity=sigma_similarity,
         neg=neg

@@ -130,6 +130,7 @@ class ARPDFOptimizer:
             epochs=1000,
             loss_name="angular",
             device="cpu",
+            warmup=0,
         ):
         self.X = toTensor(X, device=device).float().contiguous()
         self.Y = toTensor(Y, device=device).float().contiguous()
@@ -149,6 +150,7 @@ class ARPDFOptimizer:
         self.epochs = epochs
         self.loss_name = loss_name
         self.device = device
+        self.warmup = warmup
         self._loss_func = self._get_loss_func(loss_name)
         self._prepare_weights(weight_cutoff)
 
@@ -229,9 +231,6 @@ class ARPDFOptimizer:
     def _loss_angular_scale(self, ARPDF_pred):
         return -angular_similarity(ARPDF_pred, self.ARPDF_ref, self.angular_filters, self.r_weight) * strength_similarity(ARPDF_pred, self.ARPDF_ref, self.angular_filters, self.r_weight)
 
-    # def _normalization(self, delta_pos):
-    #     return torch.sum(delta_pos**2, dim=1).mean()
-
     def optimize(self, verbose=True, log_step=5, print_step=50, leave=True, prefix="Optimizing Atoms"):
         traj = np.zeros((self.epochs + 1, self.num_atoms, 3), dtype=np.float32)
         log = {
@@ -254,19 +253,21 @@ class ARPDFOptimizer:
             total_loss.backward()
             self.optimizer.step()
 
+            # Apply warmup logic: only update lower bound and lr scheduler after warmup epochs
             if self.s > 0:
                 with torch.no_grad():
                     sel_pos2_tmp = self._get_selected_pos()
                     ARPDF_tmp = self.model(sel_pos2_tmp) - self.image1
                     loss_tmp = self._loss_func(ARPDF_tmp) + self.beta * self.norm_func(sel_pos2_tmp)
-                    self.noise_scheduler.step(loss_tmp)
-
-            self.lr_scheduler.step()
+                    self.noise_scheduler.step(loss_tmp, freeze_lb=epoch < self.warmup)
+            if epoch >= self.warmup:
+                self.lr_scheduler.step()
 
             if epoch % log_step == 0:
                 lr = self.lr_scheduler.get_last_lr()[0]
                 if verbose and epoch % print_step == 0:
-                    tqdm.write(f"Epoch {epoch}: Loss={loss.item():.6f}, Norm={normalization.item():.6f}, LR={lr:.6f}")
+                    warmup_status = " (Warmup)" if epoch < self.warmup else ""
+                    tqdm.write(f"Epoch {epoch}: Loss={loss.item():.6f}, Norm={normalization.item():.6f}, LR={lr:.6f}{warmup_status}")
                     tqdm.write(f"f_min={self.noise_scheduler.f_min:.6f}, f_lb={self.noise_scheduler.f_lb:.6f}")
                 log["epoch"].append(epoch)
                 log["lr"].append(lr)
@@ -314,6 +315,7 @@ class ARPDFOptimizer:
                     "beta": self.beta,
                     "epochs": self.epochs,
                     "loss_name": self.loss_name,
+                    "warmup": self.warmup,
                     "device": self.device
                 },
             }

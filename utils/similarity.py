@@ -42,11 +42,35 @@ def get_angular_filters(R_grids, r0, sigma):
     _i0e = special.i0e if xp.__name__ == "numpy" else lambda x: to_cupy(special.i0e(to_numpy(x)))
     return xp.exp(-(_R-_r0)**2/(2*sigma**2)) * _i0e(_r0*_R/sigma)
 
-def angular_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, angular_filters: ArrayType, r_weight: Optional[ArrayType] = None) -> float:
+def get_gaussian_filters(R_grids, r0, sigma):
+    """
+    Get the 2D Gaussian ditribution at radius r0 with sigma. This can be used to filter the angular components at radius r0.
+    """
+    xp = get_array_module(R_grids)
+    _r0 = xp.asarray(r0)
+    _R = R_grids.reshape((1,) * r0.ndim + R_grids.shape)
+    _r0 = _r0.reshape(_r0.shape + (1,) * R_grids.ndim)
+
+    return xp.exp(-(_R-_r0)**2/(2*sigma**2)) 
+
+#def angular_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, angular_filters: ArrayType, r_weight: Optional[ArrayType] = None) -> float:
+#    xp = get_array_module(ARPDF1)
+#    if r_weight is None:
+#        r_weight = xp.ones_like(angular_filters[:, 0, 0])
+#    return xp.vdot(r_weight, weighted_similarity(angular_filters, ARPDF1, ARPDF2))
+
+def angular_similarity(ARPDF1, ARPDF2, angular_filters, r_weight=None):
     xp = get_array_module(ARPDF1)
     if r_weight is None:
         r_weight = xp.ones_like(angular_filters[:, 0, 0])
     return xp.vdot(r_weight, weighted_similarity(angular_filters, ARPDF1, ARPDF2))
+
+def polar_angular_similarity(ARPDF1, ARPDF2, angular_filters, r_weight=None):
+    xp = get_array_module(ARPDF1)
+    if r_weight is None:
+        r_weight = xp.ones_like(angular_filters[:, 0, 0])
+    return xp.vdot(r_weight, weighted_similarity(angular_filters, ARPDF1, ARPDF2))
+
 
 def strength_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, angular_filters: ArrayType, r_weight: Optional[ArrayType] = None) -> float:
     xp = get_array_module(ARPDF1)

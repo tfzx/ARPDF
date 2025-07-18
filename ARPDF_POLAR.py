@@ -6,10 +6,10 @@ import MDAnalysis as mda
 import MDAnalysis.analysis.distances as mda_dist
 from scipy.ndimage import gaussian_filter as gaussian_filter_np
 from utils import box_shift, generate_grids, calc_AFF, show_images, show_images_polar
-from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, generate_field_polar
-from utils.similarity import cosine_similarity
+from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, generate_field_polar, prepare_field_polar_cache
 from types import ModuleType
 from scipy.special import i0
+from utils.weights import generate_pair_weights
 #
 
 
@@ -130,16 +130,20 @@ def compute_fields_polar(
     Returns:
         Dict of atom-pair-type -> computed polar field.
     """
+    
     xp = get_array_module(R)  # Determine NumPy or CuPy backend
     if delta is None:
         h = R[1, 1] - R[0, 0]  # Assume uniform spacing in R
         delta = 2 * h 
 
     fields = {}
+
+    # 如果输入是cupy，要先转CPU numpy计算weights
+    
+    
     for atom_pair_type, (r_vals, theta_vals) in atom_pairs.items():
         r_vals = xp.array(r_vals)
         theta_vals = xp.array(theta_vals)
-
         field = generate_field_polar(R, Phi, r_vals, theta_vals, delta)
         fields[atom_pair_type] = field
 
@@ -256,11 +260,7 @@ def compute_ARPDF_polar(
             ARPDF[key][ARPDF[key] > 0] = 0
 
     # Weighted sum of ARPDF
-    weights = {
-        ("C", "C"): 1,
-        ("C", "Cl"): 2,
-        ("Cl", "Cl"): 4
-    }
+    weights = generate_pair_weights()
 
     total_ARPDF = None
     for key, field in ARPDF.items():
@@ -299,3 +299,44 @@ def compare_ARPDF(ARPDF, ARPDF_ref, grids_XY, sim_name = "Sim", sim_value = None
     return show_images({f"ARPDF ({sim_name}: {sim_value:0.2f})": ARPDF, "ARPDF (Reference)": ARPDF_ref}.items(), 
                       plot_range=[xmin, xmax, ymin, ymax], show_range=show_range, c_range=vmax,
                         cmap="bwr", colorbar="align")
+
+def compare_ARPDF_polar(ARPDF, ARPDF_ref, grids_polar, sim_name="Polar Sim", sim_value=None, show_range=8.0, weight_cutoff=5.0):
+    """
+    Compare ARPDF and ARPDF_ref in polar coordinates.
+
+    Parameters
+    ----------
+    ARPDF        : 2D array in polar (R, Phi)
+    ARPDF_ref    : reference 2D array in polar (R, Phi)
+    grids_polar  : tuple (R, Phi), both are 2D arrays from meshgrid
+    sim_name     : name of similarity metric
+    sim_value    : similarity value (optional, can be computed elsewhere)
+    show_range   : radial range for plot (optional)
+    weight_cutoff: normalization cutoff (optional)
+    """
+    if sim_value is None:
+        sim_value = cosine_similarity(ARPDF, ARPDF_ref)  # or whatever metric you're using
+
+    R_grid, Phi_grid = grids_polar
+    ARPDF = ARPDF.copy()
+    ARPDF_ref = ARPDF_ref.copy()
+
+    # Normalize based on region within weight_cutoff
+    mask = R_grid < (weight_cutoff + 0.5)
+    ARPDF /= ARPDF[mask].max() + 1e-6
+    ARPDF_ref /= ARPDF_ref[mask].max() + 1e-6
+
+    # Make plot titles
+    images = {
+        f"ARPDF ({sim_name}: {sim_value:.2f})": ARPDF,
+        "ARPDF (Reference)": ARPDF_ref
+    }
+
+    # Display the polar image using imshow (in polar domain)
+    return show_images_polar(
+        images.items(),
+        r_range=(0, show_range),
+        phi_range=(0, 0.5 * np.pi),
+        cmap="bwr",
+        colorbar="align"
+    )

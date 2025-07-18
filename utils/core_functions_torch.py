@@ -148,7 +148,7 @@ class GND():
         self.gamma = gamma
 
     @torch.no_grad()  # 确保不会计算梯度
-    def step(self, f_val: torch.Tensor):
+    def step(self, f_val: torch.Tensor, freeze_lb=False):
         """
         Performs the noise step.
         """
@@ -165,6 +165,7 @@ class GND():
 
                 # 更新参数
                 param.data.add_(d_p)
-        self.f_lb = min(f_lb * self.gamma + f_min * (1 - self.gamma), f_min)
+        if not freeze_lb:
+            self.f_lb = min(f_lb * self.gamma + f_min * (1 - self.gamma), f_min)
         self.f_min = f_min
         return f_val

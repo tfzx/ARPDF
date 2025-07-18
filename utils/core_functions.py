@@ -1,6 +1,6 @@
 import sys
 import numpy as np
-from typing import TypeVar
+from typing import TypeVar, Optional
 import abel
 from scipy.special import i0, i0e
 
@@ -154,6 +154,7 @@ def generate_field_cuda(X, Y, r_vals, theta_vals, delta):
     threads_per_block = 256
     blocks_per_grid = (grid_size + threads_per_block - 1) // threads_per_block
 
+
     generate_field_kernel(
         (blocks_per_grid,), (threads_per_block,),
         (X, Y, r_vals, theta_vals, output, r_vals.size, grid_size, delta)
@@ -280,8 +281,41 @@ void generate_field_polar_kernel(float* R_grid, float* Phi_grid, float* r_vals, 
 }
 '''
 
+def prepare_field_polar_cache(R, Phi, r_vals_all, delta):
+    import cupy as cp
+    import numpy as np
+    from scipy.special import i0e
 
+    global _polar_cache
+    R_gpu = cp.array(R, dtype=cp.float32)
+    Phi_gpu = cp.array(Phi, dtype=cp.float32)
 
+    R_np = R_gpu.get().reshape(-1, 1)
+    r_np = r_vals_all.get().reshape(1, -1)
+
+    delta = float(delta)
+    weights_np = np.exp(- (R_np - r_np)**2 / (2 * delta**2)) * i0e(R_np * r_np / delta)
+    weights_np = weights_np.astype(np.float32).ravel()
+    weights_gpu = cp.array(weights_np)
+
+    _polar_cache = {
+        "R": R_gpu,
+        "Phi": Phi_gpu,
+        "weights": weights_gpu,
+        "offset": 0  # 用来记录偏移量
+    }
+
+def approx_I0e(x):
+    import cupy as cp
+    x2 = x * x
+    return cp.exp(-x) * (
+        1 +
+        x2 / 4 +
+        x2**2 / 64 +
+        x2**3 / 2304 +
+        x2**4 / 147456 +
+        x2**5 / 14745600  # 添加到 x^10 项
+    )
 
 def generate_field_polar_cuda(R, Phi, r_vals, theta_vals, delta):
     import cupy as cp
@@ -294,17 +328,34 @@ def generate_field_polar_cuda(R, Phi, r_vals, theta_vals, delta):
     r_vals = cp.array(r_vals, dtype=cp.float32)
     theta_vals = cp.array(theta_vals, dtype=cp.float32)
 
-    import numpy as np
-    from scipy.special import i0e
-    R_np = R.get().reshape(-1, 1)  # (grid_size, 1)
-    r_np = r_vals.get().reshape(1, -1)  # (1, num_atoms)
+    #import numpy as np
+    #from scipy.special import i0e
+    #R_np = R.get().reshape(-1, 1)  # (grid_size, 1)
+    #r_np = r_vals.get().reshape(1, -1)  # (1, num_atoms)
 
-    delta = float(delta) 
+    #delta = float(delta) 
 
-    weights_np = np.exp(- (R_np - r_np)**2 / (2 * delta**2)) * i0e(R_np * r_np / (delta))
-    weights_np = weights_np.astype(np.float32).ravel()
-    weights = cp.array(weights_np)
+    #weights_np = np.exp(- (R_np - r_np)**2 / (2 * delta**2)) * i0e(R_np * r_np / (delta))
+    #weights_np = weights_np.astype(np.float32).ravel()
+    #weights = cp.array(weights_np)
 
+    #output = cp.zeros_like(R, dtype=cp.float32)
+    #grid_size = R.size
+    #num_atoms = r_vals.size
+
+    delta = cp.float32(delta)
+
+    # 在 GPU 上直接计算权重（不再 get 到 CPU）
+    R_mat = R.reshape(-1, 1)  # shape: (grid_size, 1)
+    r_mat = r_vals.reshape(1, -1)  # shape: (1, num_atoms)
+    delta2 = delta ** 2
+
+    exp_term = cp.exp(- (R_mat - r_mat) ** 2 / (2 * delta2))
+    #i0_term = approx_I0e(R_mat * r_mat / delta)  # ✅ 替代 scipy.special.i0e
+    #weights = (exp_term * i0_term).astype(cp.float32).reshape(-1)
+    weights = exp_term.astype(cp.float32).reshape(-1)
+
+    # 继续在 GPU 上准备输出和参数
     output = cp.zeros_like(R, dtype=cp.float32)
     grid_size = R.size
     num_atoms = r_vals.size
@@ -320,6 +371,43 @@ def generate_field_polar_cuda(R, Phi, r_vals, theta_vals, delta):
 
     return output
 
+'''
+def generate_field_polar_cuda(R, Phi, r_vals, theta_vals, delta):
+    import cupy as cp
+    global generate_field_polar_kernel, _polar_cache
+
+    if 'generate_field_polar_kernel' not in globals():
+        generate_field_polar_kernel = cp.RawKernel(_generate_field_polar_C, 'generate_field_polar_kernel')
+
+    if '_polar_cache' not in globals():
+        raise RuntimeError("Must call prepare_field_polar_cache(...) before generate_field_polar_cuda")
+
+    R_gpu = _polar_cache["R"]
+    Phi_gpu = _polar_cache["Phi"]
+    weights_gpu = _polar_cache["weights"]
+
+    n = len(r_vals)
+    offset = _polar_cache["offset"]
+    _polar_cache["offset"] += n  # 更新偏移量
+
+    r_vals_gpu = cp.array(r_vals, dtype=cp.float32)
+    theta_vals_gpu = cp.array(theta_vals, dtype=cp.float32)
+    weights = weights_gpu[offset:offset + n]
+
+    output = cp.zeros_like(R_gpu, dtype=cp.float32)
+    grid_size = R_gpu.size
+    num_atoms = r_vals_gpu.size
+
+    threads_per_block = 256
+    blocks_per_grid = (grid_size + threads_per_block - 1) // threads_per_block
+
+    generate_field_polar_kernel(
+        (blocks_per_grid,), (threads_per_block,),
+        (R_gpu, Phi_gpu, r_vals_gpu, theta_vals_gpu, weights, output, num_atoms, grid_size)
+    )
+
+    return output
+'''
 
 def generate_field_polar_numpy(
         R: np.ndarray,

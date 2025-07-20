@@ -5,15 +5,14 @@ import numpy as np
 import MDAnalysis as mda
 import MDAnalysis.analysis.distances as mda_dist
 from scipy.ndimage import gaussian_filter as gaussian_filter_np
-from utils import box_shift, generate_grids, calc_AFF, show_images, show_images_polar
+from utils import box_shift, generate_grids, calc_AFF, show_images, show_images_polar,compute_all_atom_pairs
 from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, generate_field_polar, prepare_field_polar_cache
 from types import ModuleType
 from scipy.special import i0
 from utils.weights import generate_pair_weights
-#
+from utils.similarity import cosine_similarity
 
-
-
+'''
 def compute_all_atom_pairs(
         universe: mda.Universe, 
         cutoff: float = 10.0, 
@@ -77,7 +76,7 @@ def compute_all_atom_pairs(
             atom_pairs[(type1, type2)] = (r_vals[pair_mask], theta_vals[pair_mask])
 
     return atom_pairs, len(selected_group)
-
+'''
 
 def get_atoms_pos(
         universe: mda.Universe, 
@@ -116,7 +115,7 @@ def compute_fields_polar(
     atom_pairs: Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]],
     R: ArrayType,
     Phi: ArrayType,
-    delta: Optional[float] = None,  
+    sigma0: Optional[float] = None,  
     verbose: bool = False
 ) -> Dict[Tuple[str, str], ArrayType]:
     """
@@ -132,19 +131,16 @@ def compute_fields_polar(
     """
     
     xp = get_array_module(R)  # Determine NumPy or CuPy backend
-    if delta is None:
+    if sigma0 is None:
         h = R[1, 1] - R[0, 0]  # Assume uniform spacing in R
-        delta = 2 * h 
+        sigma0 = 2 * h 
 
     fields = {}
-
-    # 如果输入是cupy，要先转CPU numpy计算weights
-    
     
     for atom_pair_type, (r_vals, theta_vals) in atom_pairs.items():
         r_vals = xp.array(r_vals)
         theta_vals = xp.array(theta_vals)
-        field = generate_field_polar(R, Phi, r_vals, theta_vals, delta)
+        field = generate_field_polar(R, Phi, r_vals, theta_vals, sigma0)
         fields[atom_pair_type] = field
 
         if verbose:
@@ -173,12 +169,12 @@ def compute_ARPDF_polar(
     N: int | None = 512,
     cutoff: float = 10.0,
     sigma0=0.4,
-    delta=None,
+    #delta=None,
     grids_polar: Optional[Tuple[ArrayType, ArrayType]] = None,  # (R, Phi)
     modified_atoms: Optional[List[int]] = None,
     polar_axis=(0, 0, 1),
     periodic: bool = False,
-    filter_fourier: Optional[Callable[[ArrayType, ArrayType, ModuleType], ArrayType]] = None,
+    #filter_fourier: Optional[Callable[[ArrayType, ArrayType, ModuleType], ArrayType]] = None,
     verbose: bool = False,
     neg: bool = False
 ) -> ArrayType:
@@ -224,8 +220,8 @@ def compute_ARPDF_polar(
         R, Phi = to_cupy(R), to_cupy(Phi)
 
     # Compute atom pairs in polar projection (returns (r_vals, theta_vals))
-    atom_pairs1, num_sel1 = compute_all_atom_pairs(u1, cutoff, modified_atoms, polar_axis, periodic=True)
-    atom_pairs2, num_sel2 = compute_all_atom_pairs(u2, cutoff, modified_atoms, polar_axis, periodic=True)
+    atom_pairs1, num_sel1 = compute_all_atom_pairs(u1, cutoff, modified_atoms, polar_axis, periodic=periodic)
+    atom_pairs2, num_sel2 = compute_all_atom_pairs(u2, cutoff, modified_atoms, polar_axis, periodic=periodic)
 
     if has_cupy:
         atom_pairs1 = to_cupy(atom_pairs1)
@@ -235,9 +231,9 @@ def compute_ARPDF_polar(
 
     # Compute projected fields in polar coordinates
     _print_func("Computing polar fields for universe 1...")
-    fields1 = compute_fields_polar(atom_pairs1, R, Phi, delta, verbose)
+    fields1 = compute_fields_polar(atom_pairs1, R, Phi, sigma0, verbose)
     _print_func("Computing polar fields for universe 2...")
-    fields2 = compute_fields_polar(atom_pairs2, R, Phi, delta, verbose)
+    fields2 = compute_fields_polar(atom_pairs2, R, Phi, sigma0, verbose)
 
     # Difference
     diff_fields = get_diff_fields(fields1, fields2)
@@ -282,23 +278,6 @@ def compute_ARPDF_polar(
         )
 
     return ARPDF if input_type == "cupy" else to_numpy(ARPDF)
-
-
-def compare_ARPDF(ARPDF, ARPDF_ref, grids_XY, sim_name = "Sim", sim_value = None, show_range = 8.0, weight_cutoff = 5.0):
-    if sim_value is None:
-        sim_value = cosine_similarity(ARPDF, ARPDF_ref)
-    X, Y = grids_XY
-    hx = X[1, 1] - X[0, 0]
-    hy = Y[1, 1] - Y[0, 0]
-    R = np.sqrt(X**2 + Y**2)
-    ARPDF /= ARPDF[R < weight_cutoff + 0.5].max() + 0.01
-    ARPDF_ref /= ARPDF_ref[R < weight_cutoff + 0.5].max() + 0.01
-    vmax = 1
-    xmin, xmax = X.min(), X.max()
-    ymin, ymax = Y.min(), Y.max()
-    return show_images({f"ARPDF ({sim_name}: {sim_value:0.2f})": ARPDF, "ARPDF (Reference)": ARPDF_ref}.items(), 
-                      plot_range=[xmin, xmax, ymin, ymax], show_range=show_range, c_range=vmax,
-                        cmap="bwr", colorbar="align")
 
 def compare_ARPDF_polar(ARPDF, ARPDF_ref, grids_polar, sim_name="Polar Sim", sim_value=None, show_range=8.0, weight_cutoff=5.0):
     """

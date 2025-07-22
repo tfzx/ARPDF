@@ -281,6 +281,7 @@ void generate_field_polar_kernel(float* R_grid, float* Phi_grid, float* r_vals, 
 }
 '''
 
+'''
 def prepare_field_polar_cache(R, Phi, r_vals_all, delta):
     import cupy as cp
     import numpy as np
@@ -316,8 +317,8 @@ def approx_I0e(x):
         x2**4 / 147456 +
         x2**5 / 14745600  # 添加到 x^10 项
     )
-
-def generate_field_polar_cuda(R, Phi, r_vals, theta_vals, delta):
+'''
+def generate_field_polar_cuda(R, Phi, r_vals, theta_vals, sigma0):
     import cupy as cp
     global generate_field_polar_kernel
     if 'generate_field_polar_kernel' not in globals():
@@ -343,14 +344,14 @@ def generate_field_polar_cuda(R, Phi, r_vals, theta_vals, delta):
     #grid_size = R.size
     #num_atoms = r_vals.size
 
-    delta = cp.float32(delta)
+    sigma0 = cp.float32(sigma0)
 
     # 在 GPU 上直接计算权重（不再 get 到 CPU）
     R_mat = R.reshape(-1, 1)  # shape: (grid_size, 1)
     r_mat = r_vals.reshape(1, -1)  # shape: (1, num_atoms)
-    delta2 = delta ** 2
+    sigma02 = sigma0 ** 2
 
-    exp_term = cp.exp(- (R_mat - r_mat) ** 2 / (2 * delta2))
+    exp_term = cp.exp(- (R_mat - r_mat) ** 2 / (2 * sigma02))
     #i0_term = approx_I0e(R_mat * r_mat / delta)  # ✅ 替代 scipy.special.i0e
     #weights = (exp_term * i0_term).astype(cp.float32).reshape(-1)
     weights = exp_term.astype(cp.float32).reshape(-1)
@@ -409,37 +410,80 @@ def generate_field_polar_cuda(R, Phi, r_vals, theta_vals, delta):
     return output
 '''
 
+import numpy as np
+
 def generate_field_polar_numpy(
-        R: np.ndarray,
-        Phi: np.ndarray,
-        r_vals: np.ndarray,
-        theta_vals: np.ndarray,
-        delta: float = 0.01,
-        batch_size: int = 128
-    ) -> np.ndarray:
+    R_grid, Phi_grid, r_vals, theta_vals, sigma0, grid_shape=None, batch_size=128
+):
     """
-    Generate field on a polar grid without smoothing function.
+    CPU 版本：极坐标场计算，支持分批计算，类似于 CUDA 版本
+
+    Args:
+        R_grid: ndarray (M,) 或 (Nr, Nphi) - 极坐标半径网格
+        Phi_grid: ndarray (M,) 或 (Nr, Nphi) - 极坐标角度网格
+        r_vals: ndarray (N,) - 每个原子的极坐标半径
+        theta_vals: ndarray (N,) - 每个原子的极坐标角度
+        sigma0: float - 高斯展开的宽度参数
+        grid_shape: tuple or None - 如果 R_grid 和 Phi_grid 是展平的一维数组，需指定二维网格形状
+        batch_size: int - 每次处理的原子数量，防止内存占用过大
+
+    Returns:
+        output: ndarray，二维数组，shape = grid_shape 或 R_grid.shape（如果R_grid本身是二维）
     """
-    final_field = np.zeros_like(R)
-    num_atoms = r_vals.shape[0]
 
-    r_batches = np.split(r_vals, range(batch_size, num_atoms, batch_size), axis=0)
-    theta_batches = np.split(theta_vals, range(batch_size, num_atoms, batch_size), axis=0)
+    R_grid = np.asarray(R_grid, dtype=np.float32)
+    Phi_grid = np.asarray(Phi_grid, dtype=np.float32)
+    r_vals = np.asarray(r_vals, dtype=np.float32)
+    theta_vals = np.asarray(theta_vals, dtype=np.float32)
 
-    R_view = R.reshape(1, -1)
-    Phi_view = Phi.reshape(1, -1)
+    sigma2 = sigma0 ** 2
 
-    EPS = 1e-10
-    for r, theta in zip(r_batches, theta_batches):
-        r = r.reshape(-1, 1)
-        theta = theta.reshape(-1, 1)
-        angle_diff = theta - Phi_view
-        C = 0.5 * (3 * np.cos(angle_diff)**2 - 1)
+    # 如果输入是二维网格，展平便于广播计算
+    if R_grid.ndim == 2 and Phi_grid.ndim == 2:
+        Nr, Nphi = R_grid.shape
+        R_flat = R_grid.reshape(-1)  # (M,)
+        Phi_flat = Phi_grid.reshape(-1)  # (M,)
+    else:
+        R_flat = R_grid
+        Phi_flat = Phi_grid
+        if grid_shape is None:
+            raise ValueError("grid_shape must be provided if input grids are 1D")
 
-        contribution = ((1 + C) / np.clip(r, EPS, None)).sum(axis=0)
-        final_field += contribution.reshape(R.shape)
+        Nr, Nphi = grid_shape
 
-    return final_field
+    M = R_flat.size
+    N = r_vals.size
+
+    output_flat = np.zeros(M, dtype=np.float32)
+
+    # 分批处理原子，防止内存过大
+    for start in range(0, N, batch_size):
+        end = min(start + batch_size, N)
+        r_batch = r_vals[start:end].reshape(1, -1)      # (1, batch_size)
+        theta_batch = theta_vals[start:end].reshape(1, -1)  # (1, batch_size)
+
+        # 计算权重
+        R_mat = R_flat.reshape(-1, 1)                   # (M,1)
+        weights = np.exp(- (R_mat - r_batch) ** 2 / (2 * sigma2))  # (M, batch_size)
+
+        # 计算角度因子
+        C_theta = 0.5 * (3 * np.cos(theta_batch) ** 2 - 1)  # (1, batch_size)
+        C_phi = 0.5 * (3 * np.cos(Phi_flat) ** 2 - 1)       # (M,)
+
+        factor = 1.0 + 2.0 * (C_phi.reshape(-1,1) * C_theta)  # (M, batch_size)
+
+        # 计算场贡献
+        field_batch = weights * factor * r_batch               # (M, batch_size)
+
+        # 累加所有原子批次贡献
+        output_flat += np.sum(field_batch, axis=1)
+
+    # 还原成二维网格
+    output = output_flat.reshape(Nr, Nphi)
+
+    return output
+
+
 
 
 def generate_field_polar(R: ArrayType, Phi: ArrayType, r_vals: ArrayType, theta_vals: ArrayType, delta: np.float32) -> ArrayType:

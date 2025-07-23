@@ -5,11 +5,10 @@ import numpy as np
 import MDAnalysis as mda
 import MDAnalysis.analysis.distances as mda_dist
 from scipy.ndimage import gaussian_filter as gaussian_filter_np
-from utils import box_shift, generate_grids, calc_AFF, show_images, show_images_polar,compute_all_atom_pairs
-from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, generate_field_polar, prepare_field_polar_cache
+from utils import box_shift, generate_grids, calc_AFF, show_images, show_images_polar,compute_all_atom_pairs, get_crossection
+from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, generate_field_polar
 from types import ModuleType
 from scipy.special import i0
-from utils.weights import generate_pair_weights
 from utils.similarity import cosine_similarity
 
 '''
@@ -201,8 +200,13 @@ def compute_ARPDF_polar(
 
     try:
         import cupy
-        has_cupy = True
-        _print_func("Using cupy to compute ARPDF...")
+        try:
+            _ = cp.zeros((1,), dtype=cp.float32)  # 若CUDA不可用，此处可能报错
+            has_cupy = True
+            _print_func("Using cupy to compute ARPDF...")
+        except Exception:
+            has_cupy = False
+            _print_func("Cannot use cupy, using numpy instead.")
     except ImportError:
         has_cupy = False
         _print_func("Cannot find cupy, using numpy instead.")
@@ -256,12 +260,16 @@ def compute_ARPDF_polar(
             ARPDF[key][ARPDF[key] > 0] = 0
 
     # Weighted sum of ARPDF
-    weights = generate_pair_weights()
+    #weights = generate_pair_weights() 
+    crossection = {atom: get_crossection(atom) for atom in Counter(u1.atoms.types)}
 
     total_ARPDF = None
     for key, field in ARPDF.items():
-        sorted_key = tuple(sorted(key))
-        weight = weights.get(sorted_key, 1)
+        A, B = key  # key 形如 ('C', 'Cl')
+        #sorted_key = tuple(sorted(key))
+        #sorted_key = tuple(sorted(key))
+        #weight = weights.get(sorted_key, 1)
+        weight = crossection[A]*crossection[B]
         weighted_field = field * weight
         total_ARPDF = weighted_field if total_ARPDF is None else total_ARPDF + weighted_field
 

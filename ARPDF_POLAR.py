@@ -5,11 +5,10 @@ import numpy as np
 import MDAnalysis as mda
 import MDAnalysis.analysis.distances as mda_dist
 from scipy.ndimage import gaussian_filter as gaussian_filter_np
-from utils import box_shift, generate_grids, calc_AFF, show_images, show_images_polar,compute_all_atom_pairs
+from utils import box_shift, generate_grids, calc_AFF, show_images, show_images_polar,compute_all_atom_pairs, get_crossection
 from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, generate_field_polar
 from types import ModuleType
 from scipy.special import i0
-from utils.get_crossection import get_crossection
 from utils.similarity import cosine_similarity
 
 '''

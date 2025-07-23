@@ -13,3 +13,13 @@ AFF = {
 def calc_AFF(atom_type: str, S: ArrayOrTensor) -> ArrayOrTensor:
     xp = get_array_module(S)
     return AFF[atom_type.upper()](xp.exp, S)
+
+ATOM_Crossection = {
+    "C": 1.0,
+    "CL": 2.0
+    # 可以继续添加其他原子
+}
+
+# Cross section for C and CL atoms, pre-fitted Gaussian functions in Fourier space
+def get_crossection(atom_type: str) -> float:
+    return ATOM_Crossection[atom_type.upper()]

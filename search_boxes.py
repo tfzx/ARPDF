@@ -388,7 +388,7 @@ class PolarStructureSearcher:
             best_result = None
             
             for polar_axis, u2, modified_atoms in self.structure_modifier.generate_modified_structures(molecule):
-                ARPDF = compute_ARPDF_polar(
+                ARPDF, _ = compute_ARPDF_polar(
                     u1=self.universe,
                     u2=u2,
                     N=512,
@@ -402,7 +402,7 @@ class PolarStructureSearcher:
                     neg=self.neg
                 )
 
-                similarity = self.similarity_calc.calc_similarity(ARPDF['total'], ARPDF_ref).get()
+                similarity = self.similarity_calc.calc_similarity(ARPDF, ARPDF_ref).get()
 
                 '''
                 similarity = polar_angular_similarity(
@@ -422,7 +422,7 @@ class PolarStructureSearcher:
                         molecule=int(molecule),
                         polar_axis=[float(x) for x in polar_axis],
                         modified_universe=u2,
-                        ARPDF=ARPDF["total"].get(),
+                        ARPDF=ARPDF.get(),
                         similarity=float(similarity),
                         modified_atoms=[int(x) for x in modified_atoms]
                     )

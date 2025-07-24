@@ -294,7 +294,11 @@ def compute_ARPDF_polar(
             aspect='auto',
         )
 
-    return ARPDF if input_type == "cupy" else to_numpy(ARPDF)
+    field = {k: v for k, v in ARPDF.items() if k != "total"}
+    ARPDF = ARPDF["total"]
+    return ARPDF if input_type == "cupy" else to_numpy(ARPDF), field if input_type == "cupy" else to_numpy(field)
+
+    #return ARPDF if input_type == "cupy" else to_numpy(ARPDF)
 
 def compare_ARPDF_polar(ARPDF, ARPDF_ref, grids_polar, sim_name="Polar Sim", sim_value=None, show_range=8.0, weight_cutoff=5.0):
     """

@@ -1,3 +1,4 @@
+from functools import partial
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -136,6 +137,78 @@ def generate_field(
         contribution = ((1 + C * (3 * (Y_view / r)**2 - 1)) / r * f_smooth(R_view, r, delta=delta)).sum(dim=0)
         final_field += contribution.view(Y.shape)
     return final_field
+
+@partial(torch.jit.trace, example_inputs=(torch.zeros(10), torch.zeros(20), torch.zeros(30), torch.zeros(30), torch.tensor(0.2)))
+def generate_field_polar_fast(
+    R: torch.Tensor, 
+    C_phi: torch.Tensor, 
+    r_vals: torch.Tensor, 
+    cos_theta_vals: torch.Tensor, 
+    sigma0: float
+):
+    """
+    Pytorch implementation for calculating a field in polar coordinates, supporting batch processing.
+
+    Args:
+        R (torch.Tensor): Polar radius grid, shape (Nr, ).
+        C_Phi (torch.Tensor): Factors of angle grid: `C_phi = 0.5 * (3 * cos(phi)^2 - 1)`, shape (Nphi, ). 
+        r_vals (torch.Tensor): Polar radii for each atom, shape (Natom,).
+        cos_theta_vals (torch.Tensor): Cosine of polar angles for each atom, shape (Natom,).
+        sigma0 (float): Width parameter for Gaussian expansion.
+        batch_size (int, optional): Number of atoms processed per batch to reduce memory usage. Default is 128.
+
+    Returns:
+        field (torch.Tensor): Computed field on the grid, shape matching R.
+    """
+    # compute gaussian weights
+    weights = torch.exp(- (R.view(-1, 1) - r_vals.view(1, -1)) ** 2 / (2 * sigma0**2))  # (Nr, Natom)
+    C_theta = 0.5 * (3 * cos_theta_vals ** 2 - 1)  # (Natom, )
+    return (weights @ r_vals).view(-1, 1) + 2.0 * C_phi.view(1, -1) * (weights @ (C_theta * r_vals)).view(-1, 1)
+
+
+def generate_field_polar(
+    R: torch.Tensor, 
+    Phi: torch.Tensor, 
+    r_vals: torch.Tensor, 
+    cos_theta_vals: torch.Tensor, 
+    sigma0: float, 
+    batch_size: int = 128
+):
+    """
+    Pytorch implementation for calculating a field in polar coordinates, supporting batch processing.
+
+    Args:
+        R (torch.Tensor): Polar radius grid, shape (Nr, Nphi).
+        Phi (torch.Tensor): Polar angle grid, shape (Nr, Nphi).
+        r_vals (torch.Tensor): Polar radii for each atom, shape (N,).
+        cos_theta_vals (torch.Tensor): Cosine of polar angles for each atom, shape (N,).
+        sigma0 (float): Width parameter for Gaussian expansion.
+        batch_size (int, optional): Number of atoms processed per batch to reduce memory usage. Default is 128.
+
+    Returns:
+        field (torch.Tensor): Computed field on the grid, shape matching R.
+    """
+    r_batches = torch.split(r_vals, batch_size, dim=0)
+    cos_theta_batches = torch.split(cos_theta_vals, batch_size, dim=0)
+    
+    R_view = R.view(-1, 1)      # (M, 1)
+    Phi_view = Phi.flatten()    # (M, )
+    final_field = torch.zeros_like(Phi_view)
+
+    sigma2 = sigma0 ** 2
+
+    for r, cos_theta in zip(r_batches, cos_theta_batches):
+        # compute gaussian weights
+        weights = torch.exp(- (R_view - r.view(1, -1)) ** 2 / (2 * sigma2))  # (M, batch_size)
+
+        # compute angle factors
+        C_theta = 0.5 * (3 * cos_theta ** 2 - 1)# (batch_size, )
+        C_phi = 0.5 * (3 * torch.cos(Phi_view) ** 2 - 1)   # (M, )
+
+        # accumulate contributions
+        final_field += weights @ r + 2.0 * C_phi * (weights @ (C_theta * r))  # (M, )
+
+    return final_field.view(R.shape)  # return to original shape
 
 
 

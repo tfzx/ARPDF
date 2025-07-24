@@ -15,7 +15,7 @@ def weighted_similarity(w, v1, v2):
     v1_flat = v1.flatten()
     v2_flat = v2.flatten()
     def inner(w, x, y):
-        return xp.einsum("ij,j,j->i", w, x, y)
+        return w @ (x * y)
     C = 0.005
     def weighted_sim(w, x, y):
         return (inner(w, x, y) / (xp.sqrt(inner(w, x, x)) + 1e-8) + C) / (xp.sqrt(inner(w, y, y)) + C)
@@ -80,36 +80,6 @@ def strength_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, angular_filters: A
         return xp.sqrt(xp.einsum("ijk,jk->i", angular_filters, img**2))
     return weighted_similarity(r_weight, get_strength(ARPDF1), get_strength(ARPDF2))
 
-def weighted_similarity_scale(weights, image1, image2):
-    xp = get_array_module(image1)
-    
-    def inner(w, x1, x2):
-        return xp.einsum("ijk,jk,jk->i", w, x1, x2)
-    
-    C = 0.005
-
-    def weighted_sim(w, x, y):
-        sim = (inner(w, x, y) / (xp.sqrt(inner(w, x, x)) + 1e-8) + C) / (xp.sqrt(inner(w, y, y)) + C)
-        return sim
-    weighted = weighted_sim(weights, image1, image2)
-
-    # strength pattern similarity（每圈强度的比例）
-    def get_strength(img):
-        # weights: (n, h, w), img: (h, w)
-        squared = img**2  # (h, w)
-        weighted_sum = xp.einsum("ijk,jk->i", weights, squared) 
-        return xp.sqrt(weighted_sum + 1e-8)
-    
-    s1 = get_strength(image1)
-    s2 = get_strength(image2)
-    
-    s1 = s1 / (xp.linalg.norm(s1) + 1e-8)
-    s2 = s2 / (xp.linalg.norm(s2) + 1e-8)
-    strength_similarity = xp.dot(s1, s2)
-
-    # 返回联合相似度（乘起来）
-    return (weighted * strength_similarity)
-    
 
 def oneD_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, axis: int = 0, weight: Optional[ArrayType] = None) -> float:
     """

@@ -168,12 +168,10 @@ def compute_ARPDF_polar(
     N: int | None = 512,
     cutoff: float = 10.0,
     sigma0=0.4,
-    #delta=None,
     grids_polar: Optional[Tuple[ArrayType, ArrayType]] = None,  # (R, Phi)
     modified_atoms: Optional[List[int]] = None,
     polar_axis=(0, 0, 1),
     periodic: bool = False,
-    #filter_fourier: Optional[Callable[[ArrayType, ArrayType, ModuleType], ArrayType]] = None,
     verbose: bool = False,
     neg: bool = False
 ) -> ArrayType:
@@ -223,7 +221,7 @@ def compute_ARPDF_polar(
     plot_range = to_numpy([R.min(), R.max(), Phi.min(), Phi.max()])
 
     if has_cupy and input_type == "numpy":
-        R, Phi = to_cupy(R), to_cupy(Phi)
+        R, Phi = to_cupy(R, Phi)
 
     # Compute atom pairs in polar projection (returns (r_vals, theta_vals))
     atom_pairs1, num_sel1 = compute_all_atom_pairs(u1, cutoff, modified_atoms, polar_axis, periodic=periodic)
@@ -248,8 +246,6 @@ def compute_ARPDF_polar(
         show_images(
             to_numpy(diff_fields).items(),
             plot_range,
-            # r_range=(0, cutoff),                # 你的半径范围
-            # phi_range=(0, 0.5 * np.pi),         # 角度范围
             colorbar_type="align",
             cmap="bwr",
             title=lambda x: f"Polar Diff Field for {x[0]}-{x[1]}",
@@ -258,47 +254,30 @@ def compute_ARPDF_polar(
             aspect='auto'
         )
 
-    # Final ARPDF = difference of fields (can include filtering, IFFT, Abel, etc. as needed)
-    ARPDF = diff_fields
+    crossection = {atom: get_crossection(atom) for atom in set(u1.atoms.types)}
+
+    total_ARPDF = 0
+    for (atom_A, atom_B), field in diff_fields.items():
+        total_ARPDF += field * crossection[atom_A] * crossection[atom_B]
 
     if neg:
-        for key in ARPDF:
-            ARPDF[key][ARPDF[key] > 0] = 0
-
-    # Weighted sum of ARPDF
-    #weights = generate_pair_weights() 
-    crossection = {atom: get_crossection(atom) for atom in u1.atoms.types}
-
-    total_ARPDF = None
-    for key, field in ARPDF.items():
-        A, B = key  # key 形如 ('C', 'Cl')
-        #sorted_key = tuple(sorted(key))
-        #sorted_key = tuple(sorted(key))
-        #weight = weights.get(sorted_key, 1)
-        weight = crossection[A]*crossection[B]
-        weighted_field = field * weight
-        total_ARPDF = weighted_field if total_ARPDF is None else total_ARPDF + weighted_field
-
-    ARPDF["total"] = total_ARPDF
-
+        total_ARPDF[total_ARPDF > 0] = 0
+    
     if verbose:
-        ARPDF_np = to_numpy(ARPDF) 
         show_images(
-            [("ARPDF", ARPDF_np["total"])],
+            [("ARPDF", to_numpy(total_ARPDF))],
             plot_range=plot_range,
             cmap="bwr",
-            # title=lambda x: f"Weighted Polar Diff Field (Total)",
             xlabel="R (A)",
             ylabel="Phi (rad)",
             clabel="Reconstructed Intensity",
             aspect='auto',
         )
 
-    field = {k: v for k, v in ARPDF.items() if k != "total"}
-    ARPDF = ARPDF["total"]
-    return ARPDF if input_type == "cupy" else to_numpy(ARPDF), field if input_type == "cupy" else to_numpy(field)
+    if input_type == "numpy":
+        total_ARPDF, diff_fields = to_numpy(total_ARPDF, diff_fields)
+    return total_ARPDF, diff_fields
 
-    #return ARPDF if input_type == "cupy" else to_numpy(ARPDF)
 
 def compare_ARPDF_polar(ARPDF, ARPDF_ref, grids_polar, sim_name="Polar Sim", sim_value=None, show_range=8.0, weight_cutoff=5.0):
     """

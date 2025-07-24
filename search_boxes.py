@@ -6,7 +6,7 @@ import MDAnalysis as mda
 from ARPDF import compute_ARPDF, compare_ARPDF
 from ARPDF_POLAR import compute_ARPDF_polar, compare_ARPDF_polar
 from utils import select_nbr_mols, clean_gro_box, rotate_ccl4_molecules, select_ccl4_molecules, update_metadata
-from utils.similarity import cosine_similarity, get_angular_filters, get_gaussian_filters, angular_similarity, strength_similarity, oneD_similarity, angular_average_similarity, polar_angular_similarity
+from utils.similarity import cosine_similarity, get_angular_filters, get_gaussian_filters, angular_similarity, strength_similarity, oneD_similarity, angular_average_similarity
 from utils.core_functions import to_cupy
 from ccl4_modifier import CCL4Modifier_CL, select_cl_atoms
 from typing import Callable, List, Tuple, Optional, Protocol
@@ -130,8 +130,8 @@ class PolarSimilarityCalculator:
     def _get_metric_function(self, metric):
         """Get the appropriate metric function"""
         metric_funcs = {
-            'angular': lambda x, y: polar_angular_similarity(x, y, self.gaussian_filter, self.r_weight),
-            'angular_scale': lambda x, y: polar_angular_similarity(x, y, self.gaussian_filter, self.r_weight) * strength_similarity(x, y, self.gaussian_filter, self.r_weight)
+            'angular': lambda x, y: angular_similarity(x, y, self.gaussian_filter, self.r_weight),
+            'angular_scale': lambda x, y: angular_similarity(x, y, self.gaussian_filter, self.r_weight) * strength_similarity(x, y, self.gaussian_filter, self.r_weight)
         }
         return metric_funcs[metric]
 

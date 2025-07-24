@@ -65,13 +65,6 @@ def angular_similarity(ARPDF1, ARPDF2, angular_filters, r_weight=None):
         r_weight = xp.ones_like(angular_filters[:, 0, 0])
     return xp.vdot(r_weight, weighted_similarity(angular_filters, ARPDF1, ARPDF2))
 
-def polar_angular_similarity(ARPDF1, ARPDF2, angular_filters, r_weight=None):
-    xp = get_array_module(ARPDF1)
-    if r_weight is None:
-        r_weight = xp.ones_like(angular_filters[:, 0, 0])
-    return xp.vdot(r_weight, weighted_similarity(angular_filters, ARPDF1, ARPDF2))
-
-
 def strength_similarity(ARPDF1: ArrayType, ARPDF2: ArrayType, angular_filters: ArrayType, r_weight: Optional[ArrayType] = None) -> float:
     xp = get_array_module(ARPDF1)
     if r_weight is None:

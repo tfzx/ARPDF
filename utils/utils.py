@@ -136,40 +136,40 @@ def generate_grids(xy_range, N: int = 512, M: Optional[int] = None) -> Tuple[np.
         M = N
     x = np.linspace(xmin, xmax, N, dtype=np.float32)
     y = np.linspace(ymin, ymax, M, dtype=np.float32)
-    return np.meshgrid(x, y)
+    return np.meshgrid(x, y, indexing="ij")
 
-def generate_grids_polar(
-    r_range: Tuple[float, float] = (0.0, 10.0),
-    theta_range: Tuple[float, float] = (0.0, 2 * np.pi),
-    Nr: int = 512,
-    Ntheta: int = 512
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Generate polar coordinate grids (R, Phi) for use in radial projection.
+# def generate_grids_polar(
+#     r_range: Tuple[float, float] = (0.0, 10.0),
+#     theta_range: Tuple[float, float] = (0.0, 2 * np.pi),
+#     Nr: int = 512,
+#     Ntheta: int = 512
+# ) -> Tuple[np.ndarray, np.ndarray]:
+#     """
+#     Generate polar coordinate grids (R, Phi) for use in radial projection.
 
-    Parameters
-    ----------
-    r_range : (rmin, rmax)
-        Radial distance range (in Å).
-    theta_range : (theta_min, theta_max)
-        Angular range (in radians).
-    Nr : int
-        Number of radial bins.
-    Ntheta : int
-        Number of angular bins.
+#     Parameters
+#     ----------
+#     r_range : (rmin, rmax)
+#         Radial distance range (in Å).
+#     theta_range : (theta_min, theta_max)
+#         Angular range (in radians).
+#     Nr : int
+#         Number of radial bins.
+#     Ntheta : int
+#         Number of angular bins.
 
-    Returns
-    -------
-    R, Phi : np.ndarray, np.ndarray
-        2D meshgrids in polar coordinates.
-    """
-    rmin, rmax = r_range
-    tmin, tmax = theta_range
+#     Returns
+#     -------
+#     R, Phi : np.ndarray, np.ndarray
+#         2D meshgrids in polar coordinates.
+#     """
+#     rmin, rmax = r_range
+#     tmin, tmax = theta_range
 
-    r_vals = np.linspace(rmin, rmax, Nr, dtype=np.float32)
-    theta_vals = np.linspace(tmin, tmax, Ntheta, dtype=np.float32)
+#     r_vals = np.linspace(rmin, rmax, Nr, dtype=np.float32)
+#     theta_vals = np.linspace(tmin, tmax, Ntheta, dtype=np.float32)
 
-    return np.meshgrid(r_vals, theta_vals, indexing="ij")
+#     return np.meshgrid(r_vals, theta_vals, indexing="ij")
 
 
 def resize_ARPDF(ARPDF_exp, original_grids, grid_size = None):
@@ -212,11 +212,11 @@ def preprocess_ARPDF(
         rmax = np.min(np.abs(original_range))
     N, M = ARPDF_raw.shape
     X_ori, Y_ori = generate_grids(original_range, N, M)
-    x_mask = np.abs(X_ori[0, :]) <= rmax
-    y_mask = np.abs(Y_ori[:, 0]) <= rmax
-    X = X_ori[y_mask, :][:, x_mask]
-    Y = Y_ori[y_mask, :][:, x_mask]
-    ARPDF = np.copy(ARPDF_raw[y_mask, :][:, x_mask])
+    x_mask = np.abs(X_ori[:, 0]) <= rmax
+    y_mask = np.abs(Y_ori[0, :]) <= rmax
+    X = X_ori[x_mask, :][:, y_mask]
+    Y = Y_ori[x_mask, :][:, y_mask]
+    ARPDF = np.copy(ARPDF_raw[x_mask, :][:, y_mask])
     ARPDF = ARPDF / np.max(np.abs(ARPDF)) * max_intensity
     if new_grid_size is not None:
         X, Y, ARPDF = resize_ARPDF(ARPDF, (X, Y), new_grid_size)
@@ -227,12 +227,13 @@ def show_images(
         plot_range = 10.0, 
         show_range = None, 
         c_range = None,
-        colorbar = "last",
+        colorbar_type = "last",
         cmap = 'inferno', 
         title = None, 
         xlabel="X-Axis",
         ylabel="Y-Axis",
         clabel="Intensity",
+        transpose: bool = True,
         **kwargs
     ):
     """
@@ -243,7 +244,7 @@ def show_images(
         plot_range : Image range in units
         show_range : Range to show in units
         c_range : Range to colorbar in units
-        colorbar : Colorbar setting. "last", "none", "align", or "all"
+        colorbar_type : Colorbar setting. "last", "none", "align", or "all"
         cmap : Color map
         title : Title for subplot
         xlabel : X-axis label
@@ -251,7 +252,7 @@ def show_images(
         clabel : Colorbar label
     """
     def get_c_range(c_range):
-        if colorbar == "align" and c_range is None:
+        if colorbar_type == "align" and c_range is None:
             # Compute the global vmin and vmax for all subplots. Make sure the colormap is the same.
             all_values = np.array([[image.min(), image.max()] for _, image in images])
             c_range = all_values[:, 0].min(), all_values[:, 1].max()
@@ -274,15 +275,16 @@ def show_images(
     N = len(images)
     plot_range = get_xy_range(plot_range)
     show_range = get_xy_range(show_range) if show_range is not None else plot_range
-    colorbar = colorbar.strip().lower()
+    colorbar_type = colorbar_type.strip().lower()
     c_range = get_c_range(c_range)  # None or ndarray of shape (N, 2)
     title_map = get_title_map(title)
     
     W, H = 5 * N + 1, 5
-    fig, axs = plt.subplots(1, N, figsize=(W, H), sharey=(colorbar != "all"))   # share y axis if colorbar is not "all"
+    fig, axs = plt.subplots(1, N, figsize=(W, H), sharey=(colorbar_type != "all"))   # share y axis if colorbar is not "all"
     axs = np.atleast_1d(axs)  # Ensure axs is always an iterable
     imgs = []
     for (i, ax), (key, image) in zip(enumerate(axs), images):
+        image = image.T if transpose else image
         img = ax.imshow(image, origin='lower', extent=plot_range, cmap=cmap, **kwargs)
         imgs.append(img)
         ax.set_title(title_map(key))
@@ -293,7 +295,7 @@ def show_images(
             img.set_clim(c_range[i])
     
     # Set y labels
-    if colorbar != "all":
+    if colorbar_type != "all":
         axs[0].set_ylabel(ylabel)
     else:
         for ax in axs:
@@ -301,91 +303,91 @@ def show_images(
 
     if len(images) > 1:
         fig.tight_layout()
-        if colorbar in ["align", "last"]:
+        if colorbar_type in ["align", "last"]:
             fig.subplots_adjust(right=(W - 1) / W)  # Adjust layout to leave space for colorbar
             ax_pos = fig.axes[-1].get_position().bounds
             cbar_ax = fig.add_axes([(W - 0.8) / W, ax_pos[1], 0.25 / W, ax_pos[3]])  # Define colorbar position
             fig.colorbar(img, cax=cbar_ax, label=clabel)  # Attach colorbar to the last image
-        elif colorbar == "all":
+        elif colorbar_type == "all":
             for i, img in enumerate(imgs):
                 fig.colorbar(img, ax=axs[i], label=None if i < N else clabel) # Attach colorbar to all images
-    elif colorbar != "none":
+    elif colorbar_type != "none":
         fig.colorbar(img, ax=axs[0], label=clabel)
     return fig
 
-def show_images_polar(
-                images: Iterable[Tuple[Any, np.ndarray]], 
-        r_range: Tuple[float, float] = (0.0, 1.0),
-        phi_range: Tuple[float, float] = (0.0, 2 * np.pi),
-        c_range: Optional[Tuple[float, float]] = None,
-        colorbar: str = "last",
-        cmap: str = 'inferno', 
-        title = None, 
-        clabel: str = "Intensity",
-        **kwargs
-    ):
-    """
-    Visualize multiple images with R (radius) as x-axis and phi (angle) as y-axis.
+# def show_images_polar(
+#         images: Iterable[Tuple[Any, np.ndarray]], 
+#         r_range: Tuple[float, float] = (0.0, 1.0),
+#         phi_range: Tuple[float, float] = (0.0, 2 * np.pi),
+#         c_range: Optional[Tuple[float, float]] = None,
+#         colorbar: str = "last",
+#         cmap: str = 'inferno', 
+#         title = None, 
+#         clabel: str = "Intensity",
+#         **kwargs
+#     ):
+#     """
+#     Visualize multiple images with R (radius) as x-axis and phi (angle) as y-axis.
 
-    Parameters:
-        images     : Iterable of (title, image) tuples to plot
-        r_range    : Tuple for radial range (min, max) along x-axis
-        phi_range  : Tuple for angular range (min, max) along y-axis
-        c_range    : Tuple or list of (vmin, vmax) for color scale, or None
-        colorbar   : "last", "all", "none", or "align"
-        cmap       : Colormap
-        title      : Title or function of key
-        clabel     : Colorbar label
-        kwargs     : Additional imshow() kwargs
-    """
-    def get_title_map(title):
-        if title is None:
-            return lambda key: str(key)
-        elif isinstance(title, str):
-            return lambda key: f"{title} {key}"
-        else:
-            return title
+#     Parameters:
+#         images     : Iterable of (title, image) tuples to plot
+#         r_range    : Tuple for radial range (min, max) along x-axis
+#         phi_range  : Tuple for angular range (min, max) along y-axis
+#         c_range    : Tuple or list of (vmin, vmax) for color scale, or None
+#         colorbar   : "last", "all", "none", or "align"
+#         cmap       : Colormap
+#         title      : Title or function of key
+#         clabel     : Colorbar label
+#         kwargs     : Additional imshow() kwargs
+#     """
+#     def get_title_map(title):
+#         if title is None:
+#             return lambda key: str(key)
+#         elif isinstance(title, str):
+#             return lambda key: f"{title} {key}"
+#         else:
+#             return title
 
-    images = list(images)
-    N = len(images)
-    colorbar = colorbar.strip().lower()
-    title_map = get_title_map(title)
+#     images = list(images)
+#     N = len(images)
+#     colorbar = colorbar.strip().lower()
+#     title_map = get_title_map(title)
 
-    # Compute common color range if needed
-    if colorbar == "align" and c_range is None:
-        all_vals = np.array([[img.min(), img.max()] for _, img in images])
-        c_range = (all_vals[:, 0].min(), all_vals[:, 1].max())
+#     # Compute common color range if needed
+#     if colorbar == "align" and c_range is None:
+#         all_vals = np.array([[img.min(), img.max()] for _, img in images])
+#         c_range = (all_vals[:, 0].min(), all_vals[:, 1].max())
 
-    # Figure setup
-    W, H = 5 * N + 1, 5
-    fig, axs = plt.subplots(1, N, figsize=(W, H), sharey=(colorbar != "all"))
-    axs = np.atleast_1d(axs)
-    imgs = []
+#     # Figure setup
+#     W, H = 5 * N + 1, 5
+#     fig, axs = plt.subplots(1, N, figsize=(W, H), sharey=(colorbar != "all"))
+#     axs = np.atleast_1d(axs)
+#     imgs = []
 
-    for i, ((key, image), ax) in enumerate(zip(images, axs)):
-        extent = [r_range[0], r_range[1], phi_range[0], phi_range[1]]
-        image = image.T 
-        img = ax.imshow(image, origin='lower', extent=extent, aspect='auto', cmap=cmap, **kwargs)
-        if c_range is not None:
-            img.set_clim(*c_range)
-        imgs.append(img)
-        ax.set_title(title_map(key))
-        ax.set_xlabel("R")
-        if i == 0 or colorbar == "all":
-            ax.set_ylabel("φ")
+#     for i, ((key, image), ax) in enumerate(zip(images, axs)):
+#         extent = [r_range[0], r_range[1], phi_range[0], phi_range[1]]
+#         image = image.T 
+#         img = ax.imshow(image, origin='lower', extent=extent, aspect='auto', cmap=cmap, **kwargs)
+#         if c_range is not None:
+#             img.set_clim(*c_range)
+#         imgs.append(img)
+#         ax.set_title(title_map(key))
+#         ax.set_xlabel("R")
+#         if i == 0 or colorbar == "all":
+#             ax.set_ylabel("φ")
 
-    if colorbar != "none":
-        if colorbar in ["last", "align"]:
-            fig.subplots_adjust(right=0.85)
-            ax_pos = axs[-1].get_position().bounds
-            cax = fig.add_axes([0.87, ax_pos[1], 0.02, ax_pos[3]])
-            fig.colorbar(imgs[-1], cax=cax, label=clabel)
-        elif colorbar == "all":
-            for ax, im in zip(axs, imgs):
-                fig.colorbar(im, ax=ax, label=clabel)
+#     if colorbar != "none":
+#         if colorbar in ["last", "align"]:
+#             fig.subplots_adjust(right=0.85)
+#             ax_pos = axs[-1].get_position().bounds
+#             cax = fig.add_axes([0.87, ax_pos[1], 0.02, ax_pos[3]])
+#             fig.colorbar(imgs[-1], cax=cax, label=clabel)
+#         elif colorbar == "all":
+#             for ax, im in zip(axs, imgs):
+#                 fig.colorbar(im, ax=ax, label=clabel)
 
-    fig.tight_layout()
-    return fig
+#     fig.tight_layout()
+#     return fig
 
 
 def load_exp_data(data_dir: str, rmax: float = 10.0, new_grid_size = None, max_intensity = 1.0):

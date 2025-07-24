@@ -5,7 +5,7 @@ import numpy as np
 import MDAnalysis as mda
 import MDAnalysis.analysis.distances as mda_dist
 from scipy.ndimage import gaussian_filter as gaussian_filter_np
-from utils import box_shift, generate_grids, calc_AFF, show_images, show_images_polar,compute_all_atom_pairs, get_crossection
+from utils import box_shift, generate_grids, calc_AFF, show_images,compute_all_atom_pairs, get_crossection
 from utils.core_functions import ArrayType, get_array_module, to_cupy, to_numpy, abel_inversion, generate_field_polar
 from types import ModuleType
 from scipy.special import i0
@@ -199,7 +199,7 @@ def compute_ARPDF_polar(
     _print_func = print if verbose else lambda *args: None
 
     try:
-        import cupy
+        import cupy as cp
         try:
             _ = cp.zeros((1,), dtype=cp.float32)  # 若CUDA不可用，此处可能报错
             has_cupy = True
@@ -219,6 +219,8 @@ def compute_ARPDF_polar(
         R, Phi = grids_polar
         input_type = get_array_module(R).__name__
         N = R.shape[0]
+    
+    plot_range = to_numpy([R.min(), R.max(), Phi.min(), Phi.max()])
 
     if has_cupy and input_type == "numpy":
         R, Phi = to_cupy(R), to_cupy(Phi)
@@ -243,13 +245,17 @@ def compute_ARPDF_polar(
     diff_fields = get_diff_fields(fields1, fields2)
 
     if verbose:
-        diff_fields_np = to_numpy(diff_fields)
-        show_images_polar(
-            diff_fields_np.items(),
-            r_range=(0, cutoff),                # 你的半径范围
-            phi_range=(0, 0.5 * np.pi),         # 角度范围
+        show_images(
+            to_numpy(diff_fields).items(),
+            plot_range,
+            # r_range=(0, cutoff),                # 你的半径范围
+            # phi_range=(0, 0.5 * np.pi),         # 角度范围
+            colorbar_type="align",
             cmap="bwr",
             title=lambda x: f"Polar Diff Field for {x[0]}-{x[1]}",
+            xlabel="R (A)",
+            ylabel="Phi (rad)",
+            aspect='auto'
         )
 
     # Final ARPDF = difference of fields (can include filtering, IFFT, Abel, etc. as needed)
@@ -261,7 +267,7 @@ def compute_ARPDF_polar(
 
     # Weighted sum of ARPDF
     #weights = generate_pair_weights() 
-    crossection = {atom: get_crossection(atom) for atom in Counter(u1.atoms.types)}
+    crossection = {atom: get_crossection(atom) for atom in u1.atoms.types}
 
     total_ARPDF = None
     for key, field in ARPDF.items():
@@ -277,12 +283,15 @@ def compute_ARPDF_polar(
 
     if verbose:
         ARPDF_np = to_numpy(ARPDF) 
-        show_images_polar(
-            [("total", ARPDF_np["total"])],
-            r_range=(0, cutoff),
-            phi_range=(0, 0.5 * np.pi),
+        show_images(
+            [("ARPDF", ARPDF_np["total"])],
+            plot_range=plot_range,
             cmap="bwr",
-            title=lambda x: f"Weighted Polar Diff Field (Total)"
+            # title=lambda x: f"Weighted Polar Diff Field (Total)",
+            xlabel="R (A)",
+            ylabel="Phi (rad)",
+            clabel="Reconstructed Intensity",
+            aspect='auto',
         )
 
     return ARPDF if input_type == "cupy" else to_numpy(ARPDF)
@@ -304,14 +313,15 @@ def compare_ARPDF_polar(ARPDF, ARPDF_ref, grids_polar, sim_name="Polar Sim", sim
     if sim_value is None:
         sim_value = cosine_similarity(ARPDF, ARPDF_ref)  # or whatever metric you're using
 
-    R_grid, Phi_grid = grids_polar
+    R, Phi = grids_polar
     ARPDF = ARPDF.copy()
     ARPDF_ref = ARPDF_ref.copy()
 
     # Normalize based on region within weight_cutoff
-    mask = R_grid < (weight_cutoff + 0.5)
+    mask = R < (weight_cutoff + 0.5)
     ARPDF /= ARPDF[mask].max() + 1e-6
     ARPDF_ref /= ARPDF_ref[mask].max() + 1e-6
+    vmax = 1
 
     # Make plot titles
     images = {
@@ -320,10 +330,15 @@ def compare_ARPDF_polar(ARPDF, ARPDF_ref, grids_polar, sim_name="Polar Sim", sim
     }
 
     # Display the polar image using imshow (in polar domain)
-    return show_images_polar(
+    return show_images(
         images.items(),
-        r_range=(0, show_range),
-        phi_range=(0, 0.5 * np.pi),
+        plot_range=[R.min(), R.max(), Phi.min(), Phi.max()],
+        show_range=[0, show_range, Phi.min(), Phi.max()],
+        c_range=vmax,
+        colorbar_type="align",
         cmap="bwr",
-        colorbar="align"
+        aspect='auto',
+        xlabel="R (A)",
+        ylabel="Phi (rad)",
+        clabel="Intensity",
     )

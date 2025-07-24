@@ -262,6 +262,8 @@ def compute_ARPDF(
         input_type = get_array_module(X).__name__
         N = X.shape[0]
 
+    plot_range = to_numpy([X.min(), X.max(), Y.min(), Y.max()])
+
     if has_cupy and input_type == "numpy":
         X, Y = to_cupy(X, Y)
 
@@ -284,12 +286,12 @@ def compute_ARPDF(
     diff_fields = get_diff_fields(fields1, fields2)
 
     if verbose:
-        show_images(to_numpy(fields1).items(), plot_range=cutoff, colorbar="all", cmap="inferno", 
+        show_images(to_numpy(fields1).items(), plot_range=plot_range, colorbar_type="all", cmap="inferno", 
                     title=lambda x: f"Field for {x[0]}-{x[1]}")
         diff_fields_np = to_numpy(diff_fields)
         c_range = np.array([np.abs(field).max() for field in diff_fields_np.values()])
         c_range = np.array([-c_range, c_range]).T
-        show_images(diff_fields_np.items(), plot_range=cutoff, c_range=c_range, colorbar="all", cmap="bwr", 
+        show_images(diff_fields_np.items(), plot_range=plot_range, c_range=c_range, colorbar_type="all", cmap="bwr", 
                     title=lambda x: f"Diff Field for {x[0]}-{x[1]}")
 
     # ARPDF computation
@@ -302,10 +304,8 @@ def compute_ARPDF(
         ARPDF[ARPDF>0]=0
 
     if verbose:
-        xmin, xmax = X.min(), X.max()
-        ymin, ymax = Y.min(), Y.max()
         img = to_numpy(ARPDF)
-        show_images([("ARPDF", img)], plot_range=to_numpy([xmin, xmax, ymin, ymax]), show_range=8, cmap="bwr", 
+        show_images([("ARPDF", img)], plot_range=plot_range, show_range=8, cmap="bwr", 
                     c_range=0.5*img.max(), clabel="Reconstructed Intensity") #, interpolation='bicubic')
         plt.show()
 
@@ -325,4 +325,4 @@ def compare_ARPDF(ARPDF, ARPDF_ref, grids_XY, sim_name = "Sim", sim_value = None
     ymin, ymax = Y.min(), Y.max()
     return show_images({f"ARPDF ({sim_name}: {sim_value:0.2f})": ARPDF, "ARPDF (Reference)": ARPDF_ref}.items(), 
                       plot_range=[xmin, xmax, ymin, ymax], show_range=show_range, c_range=vmax,
-                        cmap="bwr", colorbar="align")
+                        cmap="bwr", colorbar_type="align")

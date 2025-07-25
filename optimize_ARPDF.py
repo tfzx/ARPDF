@@ -12,9 +12,10 @@ from torch import Tensor
 from torch.optim.lr_scheduler import ExponentialLR
 import matplotlib.pyplot as plt
 from ARPDF import compare_ARPDF, get_atoms_pos
+from ARPDF_POLAR import compare_ARPDF_polar
 import utils
 from utils import calc_AFF, update_metadata, box_shift, get_crossection
-from utils.similarity import get_angular_filters, cosine_similarity, angular_similarity, strength_similarity
+from utils.similarity import get_angular_filters, cosine_similarity, angular_similarity, get_gaussian_filters, strength_similarity
 from utils.core_functions_torch import generate_gaussian_kernel, gaussian_filter, get_abel_trans_mat, generate_field, toTensor, GND, generate_field_polar, generate_field_polar_fast
 from tqdm import tqdm
 
@@ -114,14 +115,13 @@ class ARPDFModel:
 class ARPDFPolarModel:
     def __init__(self, R, Phi, atom_types: List[str], cutoff = 10.0, sigma0 = 0.4, field_batch_size=256):
         super(ARPDFPolarModel, self).__init__()
-        # self.R = toTensor(R).float().contiguous()
-        # self.Phi = toTensor(Phi).float().contiguous()
-        self.R = toTensor(R[:, 0]).float().contiguous()
-        self.Phi = toTensor(Phi[0, :]).float().contiguous()
-        self.img_shape = R.shape
-        self.C_phi = 0.5 * (3 * torch.cos(self.Phi) ** 2 - 1)   # (Nphi, )
-        self.cutoff = cutoff
-        self.sigma0 = torch.tensor(sigma0)
+        self.R = toTensor(R).float().contiguous()       # (N_r, N_phi)
+        self.Phi = toTensor(Phi).float().contiguous()   # (N_r, N_phi)
+        self.r = self.R[:, 0].contiguous()              # (N_r, )
+        self.phi = self.Phi[0, :].contiguous()          # (N_phi, )
+        self.C_phi = 0.5 * (3 * torch.cos(self.phi) ** 2 - 1) # (Nphi, )
+        self.cutoff = torch.tensor(cutoff).float()
+        self.sigma0 = torch.tensor(sigma0).float()
         self.field_batch_size = field_batch_size
         self.prepare(atom_types)
 
@@ -135,7 +135,7 @@ class ARPDFPolarModel:
         polar_axis /= torch.linalg.norm(polar_axis)
         self.polar_axis = polar_axis
 
-    def prepare(self, atom_types: Dict[str, int]):
+    def prepare(self, atom_types: List[str]):
         for atom_type in atom_types:
             setattr(self, f"Crossection_{atom_type}", torch.tensor(get_crossection(atom_type)))
     
@@ -154,16 +154,15 @@ class ARPDFPolarModel:
     
     def forward(self, center_pos: Tensor):
         all_pos = torch.cat([center_pos, self.around_pos], dim=0)
-        total_image = torch.zeros(self.img_shape, dtype=torch.float32, device=self.R.device)
+        total_image = torch.zeros_like(self.R)
         for atom_type1, atom_type2 in self.all_pair_types:
             ij_idx = self.atom_pairs(atom_type1, atom_type2)
             vectors = all_pos[ij_idx[:, 1]] - all_pos[ij_idx[:, 0]]
             r_vals = torch.linalg.norm(vectors, dim=1)
             cos_theta_vals = (vectors @ self.polar_axis) / r_vals
             mask = r_vals <= self.cutoff
-            field = generate_field_polar_fast(self.R, self.C_phi, r_vals[mask], cos_theta_vals[mask], sigma0=self.sigma0)
+            field = generate_field_polar_fast(self.r, self.C_phi, r_vals[mask], cos_theta_vals[mask], sigma0=self.sigma0)
             total_image += field * self.crossection(atom_type1) * self.crossection(atom_type2)
-
         return total_image
 
 
@@ -359,6 +358,7 @@ class ARPDFOptimizer:
                 "u2_opt_name": "CCl4_optimized.gro",
                 "log_name": "log.txt",
                 "traj_name": "traj.npy",
+                "coordinate type": "Cartesian",
                 "optimized_atoms": [int(x) for x in self.modified_atoms],
                 "ARPDF_size": self.ARPDF_ref.shape,
                 "type_counts": self.type_counts,
@@ -388,7 +388,6 @@ class ARPDFPolarOptimizer:
             R, Phi,
             ARPDF_ref, 
             atom_types: List[str],
-            filter_fourier = None,
             cutoff=10.0,
             sigma0=0.4,
             weight_cutoff=6.0,
@@ -407,7 +406,7 @@ class ARPDFPolarOptimizer:
         self.Phi = toTensor(Phi, device=device).float().contiguous()
         self.ARPDF_ref = toTensor(ARPDF_ref, device=device).float().contiguous()
         self.atom_types = atom_types
-        self.model = ARPDFPolarModel(R, Phi, atom_types, filter_fourier, cutoff, sigma0, field_batch_size=512).to(device=device)
+        self.model = ARPDFPolarModel(R, Phi, atom_types, cutoff, sigma0).to(device=device)
         self.cutoff = cutoff
         self.weight_cutoff = weight_cutoff
         self.sigma0 = sigma0
@@ -478,7 +477,7 @@ class ARPDFPolarOptimizer:
         self.cosine_weight /= self.cosine_weight.sum()
         r0_arr = torch.linspace(0, 8, 40)
         dr0 = (r0_arr[1] - r0_arr[0]).item()
-        self.angular_filters = toTensor(get_angular_filters(R.cpu().numpy(), r0_arr.numpy(), sigma=dr0/6.0), device=self.device).float()
+        self.angular_filters = toTensor(get_gaussian_filters(R.cpu().numpy(), r0_arr.numpy(), sigma=dr0/6.0), device=self.device).float()
         r_weight = torch.exp(-torch.clip(r0_arr - weight_cutoff, 0)**2 / (2 * (sigma_R)**2))# / (1 + torch.exp(-10 * (r0_arr - 1)))
         r_weight /= r_weight.sum()
         self.r_weight = r_weight.to(device=self.device, dtype=torch.float32)
@@ -554,9 +553,9 @@ class ARPDFPolarOptimizer:
     def dump_results(self, traj, log):
         ARPDF_optimized = self.model(self.center_pos2_final) - self.image1
         sim_name = self.loss_name.replace("_", " ").title()
-        fig = compare_ARPDF(
+        fig = compare_ARPDF_polar(
             ARPDF_optimized.cpu().numpy(), self.ARPDF_ref.cpu().numpy(), 
-            grids_XY=(self.X.cpu().numpy(), self.Y.cpu().numpy()), 
+            grids_polar=(self.R.cpu().numpy(), self.Phi.cpu().numpy()), 
             sim_name=f"{sim_name} Sim", sim_value=-self._loss_func(ARPDF_optimized).item(),
             show_range=8.0, weight_cutoff=self.weight_cutoff
         )
@@ -573,9 +572,10 @@ class ARPDFPolarOptimizer:
                 "u2_opt_name": "CCl4_optimized.gro",
                 "log_name": "log.txt",
                 "traj_name": "traj.npy",
+                "coordinate type": "Polar",
                 "optimized_atoms": [int(x) for x in self.modified_atoms],
                 "ARPDF_size": self.ARPDF_ref.shape,
-                "type_counts": self.atom_types,
+                "atom_types": list(self.atom_types),
                 "hyperparameters": {
                     "cutoff": self.cutoff,
                     "sigma0": self.sigma0,

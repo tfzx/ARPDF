@@ -14,6 +14,8 @@ from utils.utils import (
     update_metadata,
     polar_to_cartesian,
     cartesian_to_polar,
+    cartesian_extend_quadrants,
+    polar_extend_2pi
 )
 from utils.AFF_map import calc_AFF, get_crossection
 from utils.box_modify import adjust_ccl3_structure, adjust_ccl, compute_axis_direction, clean_gro_box, rotate_CH3CN_along_CN, adjust_ccn
@@ -47,5 +49,7 @@ __all__ = [
     'adjust_ccn',
     'polar_to_cartesian',
     'cartesian_to_polar',
-    'get_crossection'
+    'get_crossection',
+    'cartesian_extend_quadrants',
+    'polar_extend_2pi'
 ]

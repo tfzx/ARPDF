@@ -14,7 +14,6 @@ from utils.utils import (
     update_metadata,
     polar_to_cartesian,
     cartesian_to_polar,
-    cartesian_extend_quadrants,
     polar_extend_2pi
 )
 from utils.AFF_map import calc_AFF, get_crossection
@@ -50,6 +49,5 @@ __all__ = [
     'polar_to_cartesian',
     'cartesian_to_polar',
     'get_crossection',
-    'cartesian_extend_quadrants',
     'polar_extend_2pi'
 ]

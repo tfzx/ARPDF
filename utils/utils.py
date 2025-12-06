@@ -568,75 +568,219 @@ def update_metadata(dir_path: str, metadata: dict) -> None:
         json.dump(existing_metadata, f, indent=4)
 
 from scipy.ndimage import map_coordinates
-def polar_to_cartesian(f_rphi, r_max=1.0, grid_shape=(256, 256)):
-    """
-    将极坐标函数 f(R, phi) 转换为直角坐标函数 f(X, Y)。
-    f_rphi: 2D numpy array，表示函数值，shape 为 (n_phi, n_r)
-    r_max: 极坐标半径最大值
-    grid_shape: 输出直角网格的形状 (height, width)
 
-    返回：
-        f_xy: 直角坐标下的二维函数值数组
-        X, Y: 对应的坐标网格
-    """
-    n_phi, n_r = f_rphi.shape
-    height, width = grid_shape
+#def polar_to_cartesian(f_rphi, r_max=1.0, grid_shape=(256, 256)): 
+#    """
+#    将极坐标函数 f(R, phi) 转换为直角坐标函数 f(X, Y)。
+#    f_rphi: 2D numpy array，表示函数值，shape 为 (n_phi, n_r)
+#    r_max: 极坐标半径最大值
+#    grid_shape: 输出直角网格的形状 (height, width)
+#
+#    返回：
+#        f_xy: 直角坐标下的二维函数值数组
+#        X, Y: 对应的坐标网格
+#    """
+#    n_phi, n_r = f_rphi.shape
+#    height, width = grid_shape
 
-    # 创建输出直角坐标网格，中心为 (0,0)
-    x = np.linspace(-r_max, r_max, width)
-    y = np.linspace(-r_max, r_max, height)
-    X, Y = np.meshgrid(x, y)
+#    # 创建输出直角坐标网格，中心为 (0,0)
+#    x = np.linspace(-r_max, r_max, width)
+#    y = np.linspace(-r_max, r_max, height)
+#    X, Y = np.meshgrid(x, y)
 
     # 将直角坐标转换为极坐标
-    R = np.sqrt(X**2 + Y**2)
-    Phi = np.arctan2(Y, X)
-    Phi = np.mod(Phi, 2 * np.pi)
+#    R = np.sqrt(X**2 + Y**2)
+#    Phi = np.arctan2(Y, X)
+#    Phi = np.mod(Phi, 2 * np.pi)
 
-    # 映射到原始 f_rphi 的坐标范围（注意反转轴顺序）
-    r_coords = (R / r_max) * (n_r - 1)
-    phi_coords = (Phi / (2 * np.pi)) * (n_phi - 1)
+#    # 映射到原始 f_rphi 的坐标范围（注意反转轴顺序）
+#    r_coords = (R / r_max) * (n_r - 1)
+#    phi_coords = (Phi / (2 * np.pi)) * (n_phi - 1)
 
     # 构造采样点 (phi_idx, r_idx)，注意 axis 0 是 phi，axis 1 是 r
-    coords = np.array([phi_coords.flatten(), r_coords.flatten()])
+#    coords = np.array([phi_coords.flatten(), r_coords.flatten()])
 
     # 插值
-    f_xy = map_coordinates(f_rphi, coords, order=1, mode='nearest').reshape(grid_shape)
+#    f_xy = map_coordinates(f_rphi, coords, order=1, mode='nearest').reshape(grid_shape)
 
-    return f_xy, X, Y
+#    return f_xy, X, Y
 
-def cartesian_to_polar(f_xy, r_max=1.0, grid_shape=(256, 256)):
-    """
-    将直角坐标函数 f(X, Y) 转换为极坐标函数 f(R, phi)。
-    f_xy: 2D numpy array，shape 为 (height, width)
-    r_max: 极坐标最大半径
-    grid_shape: 输出极坐标网格形状 (n_phi, n_r)
 
-    返回：
-        f_rphi: 极坐标下的函数值数组
-        R, Phi: 极坐标网格
-    """
-    height, width = f_xy.shape
-    n_phi, n_r = grid_shape
+def polar_to_cartesian(ARPDF_rphi, RPhi, XY):
+    R, phi = RPhi
+    X, Y = XY
 
-    # 创建极坐标网格
-    r = np.linspace(0, r_max, n_r)
-    phi = np.linspace(0, 2 * np.pi, n_phi)
-    R, Phi = np.meshgrid(r, phi)
+    Nr, Nphi = ARPDF_rphi.shape
+    r_min, r_max = R.min(), R.max()
+    phi_min, phi_max = phi.min(), phi.max()
 
-    # 极坐标转直角坐标
-    X = R * np.cos(Phi)
-    Y = R * np.sin(Phi)
+    # 分辨率
+    dr = (r_max - r_min) / (Nr - 1)
+    dphi = (phi_max - phi_min) / (Nphi - 1)
+
+    # 将笛卡尔坐标转为极坐标
+    r_sample = np.sqrt(X**2 + Y**2)
+    phi_sample = np.arctan2(Y, X)
+
+    # 将 phi_sample wrap 到 [phi_min, phi_max]
+    phi_sample_wrapped = (phi_sample - phi_min) % (2 * np.pi) + phi_min
+
+    # 判断是否在范围内
+    mask = (
+        (r_sample >= r_min) & (r_sample <= r_max) &
+        (phi_sample_wrapped >= phi_min) & (phi_sample_wrapped <= phi_max)
+    )
+
+    # 转为插值索引
+    i_sample = (r_sample - r_min) / dr
+    j_sample = (phi_sample_wrapped - phi_min) / dphi
+
+    # 越界点设为 -1 再用 map_coordinates + cval 处理
+    i_sample_safe = np.where(mask, i_sample, -1)
+    j_sample_safe = np.where(mask, j_sample, -1)
+
+    coords = np.vstack([i_sample_safe.ravel(), j_sample_safe.ravel()])
+    sampled = map_coordinates(ARPDF_rphi, coords, order=1, mode='constant', cval=0.0)
+
+    return sampled.reshape(X.shape)
+
+
+#def cartesian_to_polar(f_xy, r_max=1.0, grid_shape=(256, 256)):
+#    """
+#    将直角坐标函数 f(X, Y) 转换为极坐标函数 f(R, phi)。
+#    f_xy: 2D numpy array，shape 为 (height, width)
+#    r_max: 极坐标最大半径
+#    grid_shape: 输出极坐标网格形状 (n_phi, n_r)
+
+#    返回：
+#        f_rphi: 极坐标下的函数值数组
+#        R, Phi: 极坐标网格
+#    """
+#    height, width = f_xy.shape
+#    n_phi, n_r = grid_shape
+
+#    # 创建极坐标网格
+#    r = np.linspace(0, r_max, n_r)
+#    phi = np.linspace(0, 2 * np.pi, n_phi)
+#    R, Phi = np.meshgrid(r, phi)
+
+#    # 极坐标转直角坐标
+#    X = R * np.cos(Phi)
+#    Y = R * np.sin(Phi)
 
     # 映射到原始图像坐标（0 到 width/height）
-    x_coords = ((X + r_max) / (2 * r_max)) * (width - 1)
-    y_coords = ((Y + r_max) / (2 * r_max)) * (height - 1)
+#    x_coords = ((X + r_max) / (2 * r_max)) * (width - 1)
+#    y_coords = ((Y + r_max) / (2 * r_max)) * (height - 1)
 
-    coords = np.array([y_coords.flatten(), x_coords.flatten()])
+#    coords = np.array([y_coords.flatten(), x_coords.flatten()])
+
+#    # 插值
+#    f_rphi = map_coordinates(f_xy, coords, order=1, mode='nearest').reshape(grid_shape)
+
+#    return f_rphi, R, Phi
+
+def cartesian_to_polar(ARPDF_xy, XY, RPhi):
+
+    X, Y = XY
+    R, phi = RPhi
+
+    # 原图大小
+    H, W = ARPDF_xy.shape
+    x_min, x_max = X.min(), X.max()
+    y_min, y_max = Y.min(), Y.max()
+    
+    dx = (x_max - x_min) / (W - 1)
+    dy = (y_max - y_min) / (H - 1)
+
+    # 将极坐标转换为直角坐标
+    x_sample = R * np.cos(phi)
+    y_sample = R * np.sin(phi)
+
+    # 转为 array 索引（注意：Y 是第一个轴）
+    i_sample = (y_sample - y_min) / dy
+    j_sample = (x_sample - x_min) / dx
+
+    coords = np.vstack([i_sample.ravel(), j_sample.ravel()])
 
     # 插值
-    f_rphi = map_coordinates(f_xy, coords, order=1, mode='nearest').reshape(grid_shape)
+    sampled = map_coordinates(ARPDF_xy, coords, order=1, mode='constant', cval=0.0)
+    return sampled.reshape(R.shape)
 
-    return f_rphi, R, Phi
+#def cartesian_extend_quadrants(ARPDF_quadrant):
+#    """
+#    将第一象限的 ARPDF 拓展到整个平面，假设左右上下镜像对称。
+
+#    输入：
+#    - ARPDF_quadrant: 第一象限图像 (H, W)
+
+#    输出：
+#    - ARPDF_full: 全平面图像 (2H, 2W)
+#    """
+#    # 上下翻转（mirror y）
+#    bottom_half = np.flipud(ARPDF_quadrant)
+    
+#    # 左右翻转（mirror x）
+#    left_quadrant = np.fliplr(ARPDF_quadrant)
+#    bottom_left = np.fliplr(bottom_half)
+
+#    # 拼接成完整图像
+#    top = np.hstack([left_quadrant, ARPDF_quadrant])
+#    bottom = np.hstack([bottom_left, bottom_half])
+
+#    ARPDF_full = np.vstack([bottom, top])
+#    return ARPDF_full
+
+
+
+def polar_extend_2pi(ARPDF_rphi, R, phi, n_fold=4):
+    """
+    将 90° 范围的 ARPDF 在极坐标系下按对称性扩展为更大的角度范围。
+
+    支持扩展倍数 n_fold = 2, 3, 4。
+
+    参数:
+        ARPDF_rphi: (Nr, Nphi) 原始极坐标图像
+        R:         (Nr, Nphi) 或 (Nr, 1)
+        phi:       (Nr, Nphi) 或 (1, Nphi)，角度必须覆盖 pi/2
+        n_fold:    扩展倍数，仅支持 2, 3, 4
+
+    返回:
+        ARPDF_extended, R_extended, phi_extended
+    """
+
+    if n_fold not in [2, 3, 4]:
+        raise ValueError("仅支持 n_fold = 2, 3, 4")
+
+    # 处理 phi 为 2D
+    if phi.ndim == 1:
+        phi = np.tile(phi, (R.shape[0], 1))
+
+    # 生成扩展序列
+    ARPDF_list = []
+    phi_list = []
+
+    for i in range(n_fold):
+        shift = i * (np.pi / 2)
+
+        if i % 2 == 0:
+            ARPDF_i = ARPDF_rphi.copy()
+            phi_i = phi.copy()
+        else:
+            ARPDF_i = np.flip(ARPDF_rphi, axis=1)
+            phi_i = np.flip(phi, axis=1)
+
+        phi_i = phi_i + shift
+
+        ARPDF_list.append(ARPDF_i)
+        phi_list.append(phi_i)
+
+    ARPDF_extended = np.concatenate(ARPDF_list, axis=1)
+    phi_extended = np.concatenate(phi_list, axis=1)
+
+    return ARPDF_extended, R, phi_extended
+
+
+
 
 if __name__ == "__main__":
     import cupy as cp
